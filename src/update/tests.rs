@@ -185,3 +185,20 @@ fn latest_version_does_not_rebuild_or_request_restart() {
     assert_eq!(result["restart_required"], false);
     assert_eq!(fs::read_to_string(f.layout.root.join("GanganMouse.exe")).unwrap(), "installed fixture");
 }
+
+#[cfg(windows)]
+#[test]
+fn failed_native_build_keeps_executable_and_records_full_diagnostics() {
+    let f = Fixture::new();
+    fs::create_dir_all(f.layout.root.join("scripts")).unwrap();
+    fs::write(f.layout.root.join("scripts/build.ps1"),
+        "Write-Output 'compiler stdout detail'\n[Console]::Error.WriteLine('compiler stderr detail')\nexit 17\n").unwrap();
+    fs::write(f.layout.root.join("GanganMouse.exe"), b"installed executable").unwrap();
+    let error = build(&f.layout).unwrap_err();
+    assert!(error.contains("update-build.log"));
+    let log = fs::read_to_string(f.layout.root.join("runtime/update-build.log")).unwrap();
+    assert!(log.contains("compiler stdout detail"));
+    assert!(log.contains("compiler stderr detail"));
+    assert!(log.contains("17"));
+    assert_eq!(fs::read(f.layout.root.join("GanganMouse.exe")).unwrap(), b"installed executable");
+}

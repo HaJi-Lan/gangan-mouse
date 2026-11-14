@@ -205,6 +205,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|arg| arg == "--check") {
         return check(layout).map_err(|e| std::io::Error::other(e).into());
     }
+    if std::env::args().any(|arg| arg == "--update") {
+        let result = update::sync(&layout).map_err(std::io::Error::other)?;
+        println!("{result}");
+        return Ok(());
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1160.0, 740.0]).with_min_inner_size([1050.0, 640.0])
             .with_icon(egui::IconData { rgba: include_bytes!("../assets/app-icon.rgba").to_vec(), width: 128, height: 128 }),
@@ -219,7 +224,7 @@ fn main() {
     if let Err(error) = run() {
         eprintln!("{error}");
         #[cfg(windows)]
-        if !std::env::args().any(|arg| arg == "--check") {
+        if !std::env::args().any(|arg| arg == "--check" || arg == "--update") {
             let message: Vec<u16> = format!("肝肝鼠启动失败：{error}\0").encode_utf16().collect();
             let title: Vec<u16> = "肝肝鼠\0".encode_utf16().collect();
             unsafe {

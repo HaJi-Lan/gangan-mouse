@@ -113,9 +113,13 @@ fn build(layout: &Layout) -> Result<(), String> {
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(layout.root.join("scripts/build.ps1")).arg("-Release")
         .current_dir(&layout.root).output().map_err(|e| format!("无法启动构建：{e}"))?;
+    let log = layout.root.join("runtime/update-build.log");
+    let details = format!("exit: {}\n{}\n{}", output.status,
+        String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    fs::create_dir_all(log.parent().unwrap()).map_err(|e| e.to_string())?;
+    fs::write(&log, &details).map_err(|e| format!("无法保存构建日志：{e}"))?;
     if !output.status.success() {
-        return Err(format!("源码已更新，但程序构建失败；修复后可再次点击更新。\n{}\n{}",
-            String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)));
+        return Err(format!("源码已更新，但程序构建失败；旧程序已保留，可再次点击更新。\n日志：{}\n{details}", log.display()));
     }
     Ok(())
 }

@@ -1,8 +1,15 @@
 ﻿param([switch]$Release)
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = [Console]::OutputEncoding
 $projectRoot = Split-Path $PSScriptRoot -Parent
 Push-Location $projectRoot
+$taskTranscriptStarted = $false
 try {
+    $taskLogDir = Join-Path $projectRoot 'runtime'
+    New-Item -ItemType Directory -Path $taskLogDir -Force | Out-Null
+    Start-Transcript -Path (Join-Path $taskLogDir 'build-latest.log') -Force | Out-Null
+    $taskTranscriptStarted = $true
     if (Test-Path '.build-tools/cargo/bin/cargo.exe') {
         $env:RUSTUP_HOME = Join-Path $projectRoot '.build-tools/rustup'
         $env:CARGO_HOME = Join-Path $projectRoot '.build-tools/cargo'
@@ -14,11 +21,19 @@ try {
         # The GNU distribution includes its system libraries and LLVM linker.
         $env:RUSTFLAGS = '-C linker=rust-lld -C linker-flavor=ld.lld -C link-self-contained=yes'
     }
-    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw 'Rust 未安装，请先安装 Rust 工具链。' }
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw 'Rust toolchain is missing. Restore the bundled .build-tools directory.' }
     $buildArgs = @('build', '--locked')
     if ($Release) { $buildArgs += '--release' }
-    & cargo @buildArgs
-    if ($LASTEXITCODE -ne 0) { throw 'Rust 编译失败。' }
+    $taskCargoOut = Join-Path $taskLogDir 'build-cargo.stdout.log'
+    $taskCargoErr = Join-Path $taskLogDir 'build-cargo.stderr.log'
+    $taskCargo = Start-Process -FilePath (Get-Command cargo).Source -ArgumentList $buildArgs `
+        -WorkingDirectory $projectRoot -WindowStyle Hidden -Wait -PassThru `
+        -RedirectStandardOutput $taskCargoOut -RedirectStandardError $taskCargoErr
+    foreach ($taskOutput in @($taskCargoOut, $taskCargoErr)) {
+        Get-Content -LiteralPath $taskOutput -Encoding UTF8 | ForEach-Object { Write-Host $_ }
+    }
+    $global:LASTEXITCODE = $taskCargo.ExitCode
+    if ($LASTEXITCODE -ne 0) { throw 'Rust compilation failed. See runtime/build-latest.log.' }
     $mode = if ($Release) { 'release' } else { 'debug' }
     $taskBuiltExe = Join-Path $projectRoot "target/$mode/GanganMouse.exe"
     $taskInstalledExe = Join-Path $projectRoot 'GanganMouse.exe'
@@ -40,5 +55,11 @@ try {
         }
         throw
     }
-    Write-Host "构建完成：$projectRoot\GanganMouse.exe"
-} finally { Pop-Location }
+    Write-Host "Build completed: $projectRoot\GanganMouse.exe"
+} catch {
+    Write-Host ($_ | Out-String)
+    throw
+} finally {
+    if ($taskTranscriptStarted) { Stop-Transcript | Out-Null }
+    Pop-Location
+}
