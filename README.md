@@ -9,7 +9,7 @@ Rust 原生桌面程序，统一管理上游 OAS 的 Python 任务、配置和�
 
 双击根目录 `GanganMouse.exe`。选择配置、设置设备和任务参数，再点击“启动任务”。
 修改配置后点击该字段的“保存”。关闭窗口会停止本程序启动的任务及其子进程。
-包含配置创建/删除、精简任务菜单、动态参数编辑、任务启动/停止、实时日志和上游同步。
+包含配置创建/删除、精简任务菜单、动态参数编辑、任务启动/停止、实时日志和肝肝鼠更新。
 任务参数下方直接显示旧面板的中文注释，长说明自动换行；注释来自上游参数描述及翻译，支持换行和本地文案覆盖。
 已移除“日常任务”和“每周任务”分类及其 19 个任务：菜单不显示，参数读写、调度、任务回调和直接执行均拦截。保留御魂、肝帝专属、阴阳寮、活动任务及脚本设置。旧配置中这些任务即使已启用，也不会通过统一桌面执行。任务范围跟随上游这两个分类，规则在 `bridge/task_policy.py`，上游源码保持可同步。
 点击“删除配置”立即停止对应任务并删除文件，不弹确认、不自动备份。模板也可从配置列表选择并删除；允许删除全部配置，空列表不会自动补建配置。删除模板后，点击“新增配置”会使用上游模型默认值创建配置。
@@ -36,7 +36,7 @@ X=0 时仍必须有券；识别失败不会被当作零券，也不会盲目挑�
 
 从源码构建时，先按上游安装说明准备 Python 3.10 及 `requirements.txt` 中的依赖；将所需 Python 环境放在根目录 `toolkit/`，或使用现有统一安装布局 `runtime/upstream/toolkit/`。Rust 程序同时识别源码根目录和统一安装目录。
 
-需要使用桌面内置上游更新时，使用独立的 `runtime/upstream/` checkout；肝肝鼠源码通过本仓库的 Git 正常维护。不要用强制覆盖更新开发源码。
+桌面内置更新使用安装目录的肝肝鼠 Git 仓库，`origin` 应为 `https://github.com/HaJi-Lan/gangan-mouse.git`，分支为 `main`。安装布局中的 `runtime/upstream/` 仅用于兼容既有 Python 环境、配置和日志。
 
 需要 Rust，项目固定使用 Rust 1.100.0。本机工具链、依赖缓存及辅助工具保留在 `.build-tools`，没有修改系统 PATH；新克隆需自行安装 Rust 工具链。
 
@@ -52,18 +52,20 @@ powershell -ExecutionPolicy Bypass -File scripts/build.ps1 -Release
 ```text
 GanganMouse.exe                 唯一日常启动入口
 bridge/worker.py         独立的上游兼容层
-runtime/upstream/        原 OAS 仓库、素材、Python、用户配置和日志
-runtime/sync-history.jsonl
+runtime/upstream/        Python 环境、任务、素材、用户配置和日志
+runtime/update-history.jsonl
 src/                    Rust 源码
 ```
 
-## 上游更新
+## 软件更新
 
-点击“同步上游”，确认停止本程序管理的任务后，执行 fetch 和快进合并。
-发现本地修改、本地独有提交、非 master 分支或依赖清单变化时取消更新。
-不执行 reset、clean 或强制覆盖。更新前后提交和变更路径记录在 `runtime/sync-history.jsonl`。
-Python 任务与规则随上游更新；Rust 和兼容层需要独立适配上游接口变化。
-更新后会重新加载上游模型。失败原因显示在窗口状态栏。
+点击“更新”从 [HaJi-Lan/gangan-mouse](https://github.com/HaJi-Lan/gangan-mouse) 的 `main` 分支获取更新，确认停止本程序管理的任务后，执行 fetch 和快进合并，再调用构建脚本生成新的 `GanganMouse.exe`。更新需要可用的 Git 和 Rust 工具链；本机可复用 `.build-tools` 缓存。
+
+更新范围包括 Rust 桌面、兼容层、任务源码和素材。安装布局中，任务文件的变更同步到 `runtime/upstream/`，保留其中的 Python 环境、用户配置、日志和旧 Git 元数据，不再从 GitCode 获取更新。
+
+发现本地源码修改、任务文件冲突、本地独有提交、非 `main` 分支或 Python 依赖清单变化时取消更新。不执行 reset、clean 或强制覆盖。更新记录保存在 `runtime/update-history.jsonl`。构建失败时保留现有程序和任务文件，修复环境后可再次点击更新完成安装。
+
+完成后会重连任务环境，并提示关闭、重新打开软件以使用新桌面程序。
 
 兼容层通过标准输入输出传递 JSON 行，不开放网络端口。任务进程复用上游 `Script.loop()`。
 Windows Job Object 负责窗口异常退出时的子进程清理。

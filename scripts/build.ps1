@@ -20,6 +20,25 @@ try {
     & cargo @buildArgs
     if ($LASTEXITCODE -ne 0) { throw 'Rust 编译失败。' }
     $mode = if ($Release) { 'release' } else { 'debug' }
-    Copy-Item "target/$mode/GanganMouse.exe" 'GanganMouse.exe' -Force
+    $taskBuiltExe = Join-Path $projectRoot "target/$mode/GanganMouse.exe"
+    $taskInstalledExe = Join-Path $projectRoot 'GanganMouse.exe'
+    $taskPreviousDir = Join-Path $projectRoot '.build-tools/previous-executables'
+    New-Item -ItemType Directory -Path $taskPreviousDir -Force | Out-Null
+    $taskPendingExe = Join-Path $taskPreviousDir ([System.IO.Path]::GetRandomFileName() + '.exe')
+    $taskPreviousExe = Join-Path $taskPreviousDir ([System.IO.Path]::GetRandomFileName() + '.exe')
+    Copy-Item -LiteralPath $taskBuiltExe -Destination $taskPendingExe -ErrorAction Stop
+    # Stage the complete file before replacing it. Renaming also works for a running EXE.
+    $taskHadPrevious = Test-Path -LiteralPath $taskInstalledExe
+    if ($taskHadPrevious) {
+        Move-Item -LiteralPath $taskInstalledExe -Destination $taskPreviousExe -Force -ErrorAction Stop
+    }
+    try {
+        Move-Item -LiteralPath $taskPendingExe -Destination $taskInstalledExe -ErrorAction Stop
+    } catch {
+        if ($taskHadPrevious) {
+            Move-Item -LiteralPath $taskPreviousExe -Destination $taskInstalledExe -Force -ErrorAction Stop
+        }
+        throw
+    }
     Write-Host "构建完成：$projectRoot\GanganMouse.exe"
 } finally { Pop-Location }

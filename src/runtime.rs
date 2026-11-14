@@ -143,7 +143,7 @@ impl Worker {
                     }
                     Work::Sync => {
                         bridge.take();
-                        let result = crate::upstream::sync(&layout);
+                        let result = crate::update::sync(&layout);
                         let _ = events_tx.send(match result {
                             Ok(data) => json!({"event":"updated","data":data}),
                             Err(error) => json!({"event":"error","error":error}),

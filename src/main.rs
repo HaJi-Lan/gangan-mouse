@@ -3,7 +3,7 @@ mod layout;
 mod instance;
 mod help;
 mod runtime;
-mod upstream;
+mod update;
 
 use eframe::egui;
 use layout::Layout;
@@ -17,7 +17,7 @@ struct Desktop {
     online: bool,
     updating: bool,
     confirm_update: bool,
-    show_license: bool,
+    restart_required: bool,
     deleting: bool,
     message: String,
     error: Option<String>,
@@ -50,9 +50,9 @@ impl Desktop {
         style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(16.0));
         cc.egui_ctx.set_style(style);
         Self {
-            revision: upstream::revision(&layout), worker: Worker::new(layout), online: false,
+            revision: update::revision(&layout), worker: Worker::new(layout), online: false,
             updating: false, confirm_update: false, message: "正在初始化任务运行环境…".into(),
-            show_license: false,
+            restart_required: false,
             deleting: false,
             error: None,
             configs: vec![], selected: String::new(), task: "Script".into(), menu: Value::Null,
@@ -77,9 +77,11 @@ impl Desktop {
             let Ok(event) = self.worker.events.try_recv() else { break; };
             match event["event"].as_str().unwrap_or("") {
                 "ready" => {
+                    let completing_update = self.updating;
                     self.online = true;
                     self.updating = false;
-                    self.message = "运行环境已连接".into();
+                    if self.restart_required { self.message = "肝肝鼠更新完成，请关闭并重新打开软件。".into(); }
+                    else if !completing_update { self.message = "运行环境已连接".into(); }
                     self.worker.request(json!({"command":"hello"}));
                 }
                 "log" => self.log(event["config"].as_str().unwrap_or("").into(), event["text"].as_str().unwrap_or("").into()),
@@ -93,8 +95,10 @@ impl Desktop {
                 "error" => { self.updating = false; self.error = Some(event["error"].as_str().unwrap_or("操作失败").into()); }
                 "updated" => {
                     self.states.clear();
+                    self.restart_required |= event["data"]["restart_required"] == true;
+                    self.message = if self.restart_required { "肝肝鼠更新完成，请关闭并重新打开软件。" } else { "肝肝鼠已是最新版本。" }.into();
                     self.revision = event["data"]["after"].as_str().unwrap_or("").chars().take(8).collect();
-                    self.log(String::new(), format!("上游同步完成：{}", event["data"]));
+                    self.log(String::new(), format!("更新完成：{}", event["data"]));
                 }
                 "response" => {
                     if event["ok"] != true {
@@ -200,11 +204,10 @@ impl eframe::App for Desktop {
             ui.horizontal(|ui| {
                 ui.heading("肝肝鼠");
                 ui.label("统一桌面 · Rust");
-                if ui.small_button("来源与许可").clicked() { self.show_license = true; }
                 ui.separator();
                 ui.colored_label(if self.online { egui::Color32::LIGHT_GREEN } else { egui::Color32::YELLOW }, if self.online { "运行环境已连接" } else { "运行环境未连接" });
-                ui.label(format!("上游 {}", self.revision));
-                if ui.add_enabled(!self.updating, egui::Button::new("同步上游")).clicked() { self.confirm_update = true; }
+                ui.label(format!("版本 {}", self.revision));
+                if ui.add_enabled(!self.updating, egui::Button::new("更新")).clicked() { self.confirm_update = true; }
                 if ui.add_enabled(!self.updating, egui::Button::new("重连运行环境")).clicked() {
                     self.online = false; self.states.clear(); let _ = self.worker.tx.send(Work::Restart);
                 }
@@ -296,28 +299,15 @@ impl eframe::App for Desktop {
                 egui::ScrollArea::vertical().id_salt("settings").show(ui, |ui| { self.fields(ui); });
             });
         });
-        if self.show_license {
-            egui::Window::new("来源与许可").open(&mut self.show_license)
-                .default_width(680.0).default_height(480.0).show(ctx, |ui| {
-                    ui.label("肝肝鼠 · 基于 OnmyojiAutoScript 二次开发 · 2026-11-14");
-                    ui.hyperlink_to("原项目与贡献者", "https://github.com/nearaura/OnmyojiAutoScript");
-                    ui.label("沿用 GPLv3；不提供任何担保。你可以按 GPLv3 复制、修改和再发布本软件。");
-                    ui.separator();
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.label(include_str!("../README.md"));
-                        ui.separator();
-                        ui.label(include_str!("../LICENSE"));
-                    });
-                });
-        }
         if self.confirm_update {
-            egui::Window::new("同步上游").collapsible(false).resizable(false).show(ctx, |ui| {
-                ui.label("同步前会停止本程序管理的任务；完成后重连运行环境。");
-                ui.label("配置和日志保留。存在本地修改或依赖变化时会取消更新。");
+            egui::Window::new("更新").collapsible(false).resizable(false).show(ctx, |ui| {
+                ui.label("更新来源：HaJi-Lan/gangan-mouse · main");
+                ui.label("更新前会停止本程序管理的任务；完成后请重新打开软件。");
+                ui.label("配置和日志保留。存在本地修改或 Python 依赖变化时会取消更新。");
                 ui.horizontal(|ui| {
-                    if ui.button("停止任务并同步").clicked() {
+                    if ui.button("停止任务并更新").clicked() {
                         self.confirm_update = false; self.updating = true; self.online = false;
-                        self.states.clear(); self.message = "正在停止任务并同步上游…".into();
+                        self.states.clear(); self.message = "正在更新并构建肝肝鼠…".into();
                         let _ = self.worker.tx.send(Work::Sync);
                     }
                     if ui.button("取消").clicked() { self.confirm_update = false; }
