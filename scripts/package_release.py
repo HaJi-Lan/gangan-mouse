@@ -72,6 +72,10 @@ def archive(source, output):
         if not path.is_file():
             continue
         rel = path.relative_to(source)
+        if rel.parts[:2] == ('.build-tools', 'previous-executables'):
+            continue
+        if path.name.startswith(('.global-cache', '.package-cache')):
+            continue
         if rel.parts[0] in ('target', 'log', 'runtime') or '__pycache__' in rel.parts or path.suffix in ('.pyc', '.pyo'):
             if rel.as_posix() != 'runtime/gangan-core-revision':
                 continue
