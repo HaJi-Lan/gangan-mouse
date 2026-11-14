@@ -344,7 +344,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return check(layout).map_err(|e| std::io::Error::other(e).into());
     }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1180.0, 820.0]).with_min_inner_size([900.0, 620.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1180.0, 820.0]).with_min_inner_size([900.0, 620.0])
+            .with_icon(egui::IconData { rgba: include_bytes!("../assets/app-icon.rgba").to_vec(), width: 128, height: 128 }),
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
