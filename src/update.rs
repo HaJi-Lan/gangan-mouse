@@ -6,8 +6,10 @@ pub const SOURCE: &str = "https://github.com/HaJi-Lan/gangan-mouse.git";
 const BRANCH: &str = "main";
 
 fn git_bytes(layout: &Layout, args: &[&str]) -> Result<Vec<u8>, String> {
-    let bundled = layout.python.parent().unwrap_or(&layout.upstream).join("Git/mingw64/bin/git.exe");
-    let mut command = Command::new(if bundled.is_file() { bundled } else { "git".into() });
+    let git_root = layout.python.parent().unwrap_or(&layout.upstream).join("Git");
+    let bundled = [git_root.join("cmd/git.exe"), git_root.join("mingw64/bin/git.exe")]
+        .into_iter().find(|path| path.is_file()).unwrap_or_else(|| "git".into());
+    let mut command = Command::new(bundled);
     let output = hide(&mut command).args(args).current_dir(&layout.root)
         .env("GIT_TERMINAL_PROMPT", "0").env("GCM_INTERACTIVE", "never")
         .output().map_err(|e| e.to_string())?;

@@ -35,7 +35,11 @@ def stage(destination):
     # A fresh clone has no credentials, developer identity, old OAS history, or local agent files.
     shutil.copy2(ROOT / 'GanganMouse.exe', destination / 'GanganMouse.exe')
     copy_tree(ROOT / 'runtime/upstream/toolkit', destination / 'toolkit',
-              ('fluentui.dll', 'FramelessHelperCore.dll', 'FramelessHelperQuick.dll'))
+              ('Git', 'fluentui.dll', 'FramelessHelperCore.dll', 'FramelessHelperQuick.dll'))
+    git_runtime = Path(shutil.which('git')).resolve().parents[1]
+    if not (git_runtime / 'LICENSE.txt').is_file():
+        raise RuntimeError('A complete Git for Windows runtime with LICENSE.txt is required')
+    copy_tree(git_runtime, destination / 'toolkit/Git')
     tools = destination / '.build-tools'
     tools.mkdir()
     cargo = tools / 'cargo'
@@ -86,7 +90,7 @@ def archive(source, output):
         assert bundle.testzip() is None
         names = set(bundle.namelist())
         for required in ('GanganMouse.exe', 'README.md', 'LICENSE', '.git/HEAD',
-                         'toolkit/python.exe', 'toolkit/Git/mingw64/bin/git.exe', '.build-tools/cargo/bin/cargo.exe'):
+                         'toolkit/python.exe', 'toolkit/Git/cmd/git.exe', '.build-tools/cargo/bin/cargo.exe'):
             assert 'GanganMouse/' + required in names, required
     digest = hashlib.file_digest(output.open('rb'), 'sha256').hexdigest()
     output.with_suffix('.zip.sha256').write_text(f'{digest}  {output.name}\n', encoding='ascii')
