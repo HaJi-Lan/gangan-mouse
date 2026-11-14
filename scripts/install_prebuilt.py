@@ -66,18 +66,31 @@ def validate_manifest(manifest, commit):
         raise ValueError('程序清单的 SHA-256 无效')
 
 
+def download_session(base):
+    import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    session = requests.Session()
+    # Resolve Windows/environment proxy settings once and keep that route across
+    # GitHub's redirects to its asset CDN. Registry proxy values can omit schemes.
+    session.trust_env = False
+    session.proxies = {key: requests.utils.prepend_scheme_if_needed(value, 'http')
+                       for key, value in requests.utils.get_environ_proxies(base).items()
+                       if key in ('http', 'https', 'all') and value}
+    session.verify = os.environ.get('REQUESTS_CA_BUNDLE') or os.environ.get('CURL_CA_BUNDLE') or True
+    session.headers['User-Agent'] = 'GanganMouse-Updater/1.0'
+    retry = HTTPAdapter(max_retries=Retry(total=2, connect=2, read=0, backoff_factor=0.5,
+                                          status_forcelist=(502, 503, 504), allowed_methods=('GET',)))
+    session.mount('https://', retry)
+    session.mount('http://', retry)
+    return session
+
+
 def stage(root, commit, downloads=DEFAULT_DOWNLOADS, session=None):
     import requests
     name = executable_name(commit)
     base = downloads.rstrip('/') + '/'
-    if session is None:
-        from requests.adapters import HTTPAdapter
-        from urllib3.util.retry import Retry
-        session = requests.Session()
-        retry = HTTPAdapter(max_retries=Retry(total=2, connect=2, read=0, backoff_factor=0.5,
-                                              status_forcelist=(502, 503, 504), allowed_methods=('GET',)))
-        session.mount('https://', retry)
-        session.mount('http://', retry)
+    session = session or download_session(base)
     directory = Path(root) / 'runtime' / 'prebuilt'
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / name

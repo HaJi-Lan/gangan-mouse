@@ -12,6 +12,7 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
+from urllib.parse import urlsplit
 
 import requests
 
@@ -151,6 +152,42 @@ class PrebuiltTests(unittest.TestCase):
         self.assertLessEqual(len(list((self.root / 'runtime/prebuilt').glob('*.exe'))), 2)
         self.assertLessEqual(len(list((self.root / 'runtime/previous-executables').glob('*.exe'))), 2)
         self.assertEqual((self.root / 'GanganMouse.exe').read_bytes(), self.binary)
+
+    def test_scheme_less_system_proxy_is_kept_across_asset_redirects(self):
+        owner = self
+        hosts = []
+
+        class Proxy(BaseHTTPRequestHandler):
+            def do_GET(self):
+                url = urlsplit(self.path)
+                hosts.append(url.hostname)
+                if url.hostname == 'origin.test':
+                    self.send_response(302)
+                    self.send_header('Location', 'http://assets.test' + url.path)
+                    self.end_headers()
+                else:
+                    body = owner.routes[url.path]
+                    self.send_response(200)
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Proxy)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with patch.object(requests.utils, 'get_environ_proxies',
+                              return_value={'http': f'127.0.0.1:{server.server_port}'}):
+                path = prebuilt.stage(self.root, self.commit, 'http://origin.test/mirror/')
+            self.assertEqual(path.read_bytes(), self.binary)
+            self.assertEqual(hosts, ['origin.test', 'assets.test', 'origin.test', 'assets.test'])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
 
     @unittest.skipUnless(os.name == 'nt', 'Windows PowerShell compatibility entry point')
     def test_old_client_bootstrap_updates_without_rust_or_build_directory(self):
