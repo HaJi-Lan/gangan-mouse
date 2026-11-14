@@ -111,8 +111,13 @@ fn install_core(layout: &Layout, changes: &[CoreChange]) -> Result<(), String> {
 }
 
 fn prepare_binary(layout: &Layout, commit: &str, downloads: &str) -> Result<Option<std::path::PathBuf>, String> {
+    // Keep the downloader paired with the running EXE, including installations
+    // whose old source checkout does not yet contain the new update script.
+    let installer = layout.root.join("runtime/update-installer.py");
+    fs::create_dir_all(installer.parent().unwrap()).map_err(|e| e.to_string())?;
+    fs::write(&installer, include_str!("../scripts/install_prebuilt.py")).map_err(|e| e.to_string())?;
     let output = hide(&mut Command::new(&layout.python))
-        .arg(layout.root.join("scripts/install_prebuilt.py"))
+        .arg(installer)
         .arg("--root").arg(&layout.root).args(["--commit", commit, "--downloads", downloads, "--stage-only"])
         .env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8")
         .current_dir(&layout.root).output().map_err(|e| format!("无法启动程序下载：{e}"))?;

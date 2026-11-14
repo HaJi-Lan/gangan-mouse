@@ -47,6 +47,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Dependency license notices are outdated.' }
           Copy-Item LICENSE "desktop-assets/GanganMouse-$env:GITHUB_SHA-LICENSE.txt"
           Copy-Item licenses/Rust-dependencies.txt "desktop-assets/GanganMouse-$env:GITHUB_SHA-NOTICES.txt"
+      - name: Verify desktop update regression tests
+        shell: pwsh
+        run: |
+          cargo test --release --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop regression tests failed.' }
       - name: Publish precompiled update assets
         env:
           GH_TOKEN: ${{ github.token }}
