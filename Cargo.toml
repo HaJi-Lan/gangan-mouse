@@ -1,6 +1,6 @@
 [package]
 name = "gangan-mouse"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "肝肝鼠：基于 OnmyojiAutoScript 二次开发的统一桌面"
