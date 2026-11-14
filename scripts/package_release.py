@@ -40,24 +40,8 @@ def stage(destination):
     if not (git_runtime / 'LICENSE.txt').is_file():
         raise RuntimeError('A complete Git for Windows runtime with LICENSE.txt is required')
     copy_tree(git_runtime, destination / 'toolkit/Git')
-    tools = destination / '.build-tools'
-    tools.mkdir()
-    cargo = tools / 'cargo'
-    (cargo / 'bin').mkdir(parents=True)
-    for name in ('rustup.exe', 'cargo.exe', 'rustc.exe', 'rustdoc.exe'):
-        shutil.copyfile(ROOT / '.build-tools/cargo/bin' / name, cargo / 'bin' / name)
-    copy_tree(ROOT / '.build-tools/cargo/registry', cargo / 'registry')
-    rustup = tools / 'rustup'
-    rustup.mkdir()
-    shutil.copy2(ROOT / '.build-tools/rustup/settings.toml', rustup / 'settings.toml')
-    source = ROOT / '.build-tools/rustup/toolchains'
-    # Keep the compiler, standard libraries and GNU linker; omit optional LLVM analysis tools.
-    optional = {'llc.exe', 'opt.exe', 'llvm-nm.exe', 'llvm-objdump.exe', 'llvm-link.exe',
-                'llvm-readobj.exe', 'llvm-profdata.exe', 'llvm-cov.exe', 'llvm-size.exe',
-                'llvm-strip.exe', 'llvm-objcopy.exe'}
-    copy_tree(source, rustup / 'toolchains', optional)
-    copy_tree(ROOT / '.build-tools/python-packages', tools / 'python-packages')
-    # Python and Git retain their bundled component licenses; Rust/crate sources retain theirs.
+    # Clients download prebuilt programs; compiler and crate caches remain in CI
+    # and developer checkouts. Python and Git retain their component licenses.
     (destination / 'runtime').mkdir()
     (destination / 'runtime/gangan-core-revision').write_text(git('rev-parse', 'HEAD'), encoding='ascii')
     print(json.dumps({'stage': str(destination), 'commit': git('rev-parse', 'HEAD')}, ensure_ascii=False), flush=True)
@@ -72,7 +56,7 @@ def archive(source, output):
         if not path.is_file():
             continue
         rel = path.relative_to(source)
-        if rel.parts[:2] == ('.build-tools', 'previous-executables'):
+        if rel.parts[0] == '.build-tools':
             continue
         if path.name.startswith(('.global-cache', '.package-cache')):
             continue
@@ -94,8 +78,9 @@ def archive(source, output):
         assert bundle.testzip() is None
         names = set(bundle.namelist())
         for required in ('GanganMouse.exe', 'README.md', 'LICENSE', '.git/HEAD',
-                         'toolkit/python.exe', 'toolkit/Git/cmd/git.exe', '.build-tools/cargo/bin/cargo.exe'):
+                         'toolkit/python.exe', 'toolkit/Git/cmd/git.exe', 'scripts/install_prebuilt.py'):
             assert 'GanganMouse/' + required in names, required
+        assert not any(name.startswith('GanganMouse/.build-tools/') for name in names)
     hasher = hashlib.sha256()
     with output.open('rb') as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):

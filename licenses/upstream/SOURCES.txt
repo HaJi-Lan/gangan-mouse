@@ -1,0 +1,9 @@
+egui-LICENSE-MIT.txt: https://github.com/emilk/egui/blob/fe368bacc4a15697e347607e73a56c0299b3d42d/LICENSE-MIT
+egui-LICENSE-APACHE.txt: https://github.com/emilk/egui/blob/fe368bacc4a15697e347607e73a56c0299b3d42d/LICENSE-APACHE
+font-Hack-Regular.txt: https://github.com/emilk/egui/blob/fe368bacc4a15697e347607e73a56c0299b3d42d/crates/epaint_default_fonts/fonts/Hack-Regular.txt
+font-OFL.txt: https://github.com/emilk/egui/blob/fe368bacc4a15697e347607e73a56c0299b3d42d/crates/epaint_default_fonts/fonts/OFL.txt
+font-UFL.txt: https://github.com/emilk/egui/blob/fe368bacc4a15697e347607e73a56c0299b3d42d/crates/epaint_default_fonts/fonts/UFL.txt
+font-emoji-icon-font-mit-license.txt: https://github.com/emilk/egui/blob/fe368bacc4a15697e347607e73a56c0299b3d42d/crates/epaint_default_fonts/fonts/emoji-icon-font-mit-license.txt
+clipboard-win-LICENSE.txt: https://github.com/DoumanAsh/clipboard-win/blob/ed27008ae5d1f10cfbb266de039f0fb35fd05a56/LICENSE
+gl_generator-LICENSE.txt: https://github.com/brendanzab/gl-rs/blob/ea503e8d5fb6d73c6030e6191ce738cd3bf3433e/LICENSE
+khronos_api-LICENSE.txt: https://github.com/brendanzab/gl-rs/blob/f150967b1c44ae888e6676f93f639ebc82771bdc/LICENSE

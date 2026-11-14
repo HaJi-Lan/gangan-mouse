@@ -53,7 +53,8 @@ impl Fixture {
         }
         Self::commit(&self.seed);
     }
-    fn update(&self) -> Result<Value, String> { sync_with(&self.layout, &self.source, |_| Ok(())) }
+    fn settings(&self) -> Source { Source { repository: self.source.clone(), ..Source::default() } }
+    fn update(&self) -> Result<Value, String> { sync_with(&self.layout, &self.source, &self.settings(), |_, _, _| Ok(None)) }
 }
 
 impl Drop for Fixture {
@@ -66,11 +67,12 @@ fn updates_app_bridge_and_runtime_core_preserving_user_data_and_old_git() {
     f.advance(&[("script.py", b"updated script\n"), ("src/main.rs", b"fn main() { /* update */ }\n"),
         ("bridge/worker.py", b"updated bridge\n"), ("assets/new.png", &[0, 255, 13, 10, 42])]);
     let built = Cell::new(false);
-    let result = sync_with(&f.layout, &f.source, |layout| {
-        assert_eq!(fs::read_to_string(layout.root.join("src/main.rs")).unwrap().trim(), "fn main() { /* update */ }");
+    let result = sync_with(&f.layout, &f.source, &f.settings(), |layout, commit, _| {
+        assert_eq!(git(layout, &["show", &format!("{commit}:src/main.rs")]).unwrap(), "fn main() { /* update */ }");
+        assert_eq!(fs::read_to_string(layout.root.join("src/main.rs")).unwrap().trim(), "fn main() {} ".trim());
         assert_eq!(fs::read(layout.upstream.join("script.py")).unwrap(), b"original\n");
         built.set(true);
-        Ok(())
+        Ok(None)
     }).unwrap();
     assert!(built.get());
     assert_eq!(result["source"], f.source);
@@ -144,16 +146,16 @@ fn non_main_branch_is_not_updated() {
 }
 
 #[test]
-fn failed_build_keeps_runtime_and_retry_finishes_pending_task_update() {
+fn missing_prebuilt_keeps_source_and_runtime_then_retry_finishes_update() {
     let f = Fixture::new();
     let before = revision(&f.layout);
     f.advance(&[("script.py", b"updated script\n")]);
-    let failure = sync_with(&f.layout, &f.source, |_| Err("build fixture failed".into()));
-    assert!(failure.unwrap_err().contains("build fixture failed"));
-    assert_ne!(revision(&f.layout), before);
+    let failure = sync_with(&f.layout, &f.source, &f.settings(), |_, _, _| Err("prebuilt not ready".into()));
+    assert!(failure.unwrap_err().contains("prebuilt not ready"));
+    assert_eq!(revision(&f.layout), before);
     assert_eq!(fs::read(f.layout.upstream.join("script.py")).unwrap(), b"original\n");
     let result = f.update().unwrap();
-    assert_eq!(result["before"], result["after"]);
+    assert_ne!(result["before"], result["after"]);
     assert_eq!(fs::read(f.layout.upstream.join("script.py")).unwrap(), b"updated script\n");
 }
 
@@ -177,44 +179,89 @@ fn source_layout_updates_without_a_second_runtime_checkout() {
 }
 
 #[test]
-fn latest_version_does_not_rebuild_or_request_restart() {
+fn latest_version_does_not_download_or_request_restart() {
     let f = Fixture::new();
     fs::write(f.layout.root.join("GanganMouse.exe"), "installed fixture").unwrap();
-    let result = sync_with(&f.layout, &f.source, |_| panic!("Latest version must not rebuild")).unwrap();
+    let result = sync_with(&f.layout, &f.source, &f.settings(), |_, _, _| panic!("Latest version must not download")).unwrap();
     assert_eq!(result["before"], result["after"]);
     assert_eq!(result["restart_required"], false);
     assert_eq!(fs::read_to_string(f.layout.root.join("GanganMouse.exe")).unwrap(), "installed fixture");
 }
 
-#[cfg(windows)]
+
 #[test]
-fn failed_native_build_keeps_executable_and_records_full_diagnostics() {
+fn source_settings_round_trip_and_invalid_values_keep_saved_settings() {
     let f = Fixture::new();
-    fs::create_dir_all(f.layout.root.join("scripts")).unwrap();
-    fs::write(f.layout.root.join("scripts/build.ps1"),
-        "Write-Output 'compiler stdout detail'\n[Console]::Error.WriteLine('compiler stderr detail')\nexit 17\n").unwrap();
-    fs::write(f.layout.root.join("GanganMouse.exe"), b"installed executable").unwrap();
-    let error = build(&f.layout).unwrap_err();
-    assert!(error.contains("update-build.log"));
-    let log = fs::read_to_string(f.layout.root.join("runtime/update-build.log")).unwrap();
-    assert!(log.contains("compiler stdout detail"));
-    assert!(log.contains("compiler stderr detail"));
-    assert!(log.contains("17"));
-    assert_eq!(fs::read(f.layout.root.join("GanganMouse.exe")).unwrap(), b"installed executable");
+    let mut source = Source { repository: " https://example.com/mirror.git ".into(), branch: "stable".into(), downloads: "https://example.com/binaries".into() };
+    source.save(&f.layout.root).unwrap();
+    let saved = Source::load(&f.layout.root).unwrap();
+    assert_eq!(saved.repository, "https://example.com/mirror.git");
+    assert_eq!(saved.branch, "stable");
+    assert_eq!(saved.downloads, "https://example.com/binaries/");
+    source.branch = "--upload-pack=bad".into();
+    assert!(source.save(&f.layout.root).is_err());
+    assert_eq!(Source::load(&f.layout.root).unwrap().branch, "stable");
+    source.branch = "main".into(); source.repository = "file:///local".into();
+    assert!(source.validate().is_err());
 }
 
-#[cfg(windows)]
 #[test]
-fn windows_powershell_build_bootstrap_accepts_canonical_verbatim_paths() {
-    let mut f = Fixture::new();
-    fs::create_dir_all(f.layout.root.join("scripts")).unwrap();
-    let bootstrap = include_str!("../../scripts/build.ps1").split("Push-Location $projectRoot").next().unwrap();
-    fs::write(f.layout.root.join("scripts/build.ps1"), format!(
-        "{bootstrap}\nWrite-Output (Join-Path $projectRoot 'runtime')\n")).unwrap();
-    f.layout.root = f.layout.root.canonicalize().unwrap();
-    assert!(f.layout.root.to_string_lossy().starts_with(r"\\?\"));
-    build(&f.layout).unwrap();
-    let log = fs::read_to_string(f.layout.root.join("runtime/update-build.log")).unwrap();
-    assert!(log.contains("runtime"));
-    assert!(!log.contains("Join-Path :"));
+fn malformed_source_settings_stop_updates_instead_of_falling_back() {
+    let f = Fixture::new();
+    fs::create_dir_all(f.layout.root.join("runtime")).unwrap();
+    fs::write(f.layout.root.join("runtime/update-source.json"), "broken json").unwrap();
+    assert!(Source::load(&f.layout.root).is_err());
+}
+
+#[test]
+fn custom_branch_is_fetched_without_changing_origin() {
+    let f = Fixture::new();
+    let mirror = f.directory.join("custom-source");
+    Fixture::run(&f.directory, &["clone", f.seed.to_str().unwrap(), mirror.to_str().unwrap()]);
+    Fixture::run(&mirror, &["checkout", "-b", "stable"]);
+    fs::write(mirror.join("script.py"), b"stable source\n").unwrap();
+    Fixture::commit(&mirror);
+    let mut settings = f.settings();settings.branch = "stable".into();settings.repository = mirror.to_str().unwrap().into();
+    let result = sync_with(&f.layout, &f.source, &settings, |_, _, downloads| {
+        assert_eq!(downloads, settings.downloads);Ok(None)
+    }).unwrap();
+    assert_eq!(result["branch"], "stable");
+    assert_eq!(git(&f.layout, &["remote", "get-url", "origin"]).unwrap(), f.source);
+    assert_eq!(fs::read_to_string(f.layout.root.join("script.py")).unwrap().trim(), "stable source");
+    Fixture::run(&f.layout.root, &["remote", "set-url", "origin", mirror.to_str().unwrap()]);
+    fs::write(mirror.join("script.py"), b"configured origin update\n").unwrap();
+    Fixture::commit(&mirror);
+    sync_with(&f.layout, &f.source, &settings, |_, _, _| Ok(None)).unwrap();
+    assert_eq!(fs::read_to_string(f.layout.root.join("script.py")).unwrap().trim(), "configured origin update");
+}
+
+#[test]
+fn downloaded_binary_replaces_executable_and_preserves_previous_copy() {
+    let f = Fixture::new();
+    fs::write(f.layout.root.join("GanganMouse.exe"), b"old program").unwrap();
+    f.advance(&[("script.py", b"updated source\n")]);
+    let result = sync_with(&f.layout, &f.source, &f.settings(), |layout, _, _| {
+        fs::create_dir_all(layout.root.join("runtime/prebuilt")).unwrap();
+        let path = layout.root.join("runtime/prebuilt/download.exe");
+        fs::write(&path, b"new program").unwrap();Ok(Some(path))
+    }).unwrap();
+    assert_eq!(result["restart_required"], true);
+    assert_eq!(fs::read(f.layout.root.join("GanganMouse.exe")).unwrap(), b"new program");
+    let backups: Vec<_> = fs::read_dir(f.layout.root.join("runtime/previous-executables")).unwrap().collect();
+    assert_eq!(backups.len(), 1);
+    assert_eq!(fs::read(backups[0].as_ref().unwrap().path()).unwrap(), b"old program");
+}
+
+#[test]
+fn install_failure_restores_runtime_and_leaves_retry_marker() {
+    let f = Fixture::new();
+    fs::write(f.layout.root.join("GanganMouse.exe"), b"old program").unwrap();
+    let before = git(&f.layout, &["rev-parse", "HEAD"]).unwrap();
+    f.advance(&[("script.py", b"updated source\n")]);
+    assert!(sync_with(&f.layout, &f.source, &f.settings(), |layout, _, _| Ok(Some(layout.root.join("missing.exe")))).is_err());
+    assert_eq!(fs::read(f.layout.root.join("GanganMouse.exe")).unwrap(), b"old program");
+    assert_eq!(fs::read(f.layout.upstream.join("script.py")).unwrap(), b"original\n");
+    assert_eq!(fs::read_to_string(f.layout.root.join("runtime/gangan-core-revision")).unwrap(), before);
+    f.update().unwrap();
+    assert_eq!(fs::read(f.layout.upstream.join("script.py")).unwrap(), b"updated source\n");
 }

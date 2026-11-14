@@ -20,4 +20,8 @@ Rust 原生桌面程序，统一管理上游 OAS 的 Python 任务、配置和�
 
 参数面板已移除金币、经验的 50% / 100% 加成开关，各任务与绘卷集合页保持一致。
 
-更新构建详情保存在 `runtime/build-latest.log` 和 `runtime/update-build.log`。构建失败时保留旧程序，再次更新会继续完成；也可关闭软件后运行 `GanganMouse.exe --update` 完成更新。
+软件内更新先获取与目标源码提交匹配的 Windows 预编译程序，校验版本、平台、大小及 SHA-256 后同步源码并替换程序，无需在用户电脑安装 Rust 或现场编译。程序未发布、下载失败或校验失败时保留当前版本，稍后可重试。新基础包不包含 `.build-tools` 和 `target`；本地开发仍可运行 `scripts/build.ps1 -Release -LocalBuild` 编译。
+
+“更多 → 更新源设置”可修改源码仓库地址、更新分支和预编译程序下载前缀，支持镜像地址，保存至 `runtime/update-source.json`。默认源码为本仓库 `main`，程序下载前缀为 `https://github.com/HaJi-Lan/gangan-mouse/releases/download/desktop-builds/`。自定义下载源需提供 `GanganMouse-<提交编号>-Windows-x64.exe` 和同名 `.json` 校验清单；修改更新源不会改写 Git 的 origin。
+
+更新日志保存在 `runtime/update-download.log`。也可关闭软件后运行 `GanganMouse.exe --update` 更新。旧版的更新脚本入口已兼容下载预编译程序，无需先安装编译工具；已安装旧基础包的编译环境不会自动删除。

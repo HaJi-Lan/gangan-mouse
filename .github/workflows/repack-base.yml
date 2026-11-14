@@ -18,7 +18,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      CARGO_NET_OFFLINE: 'true'
       PYTHONUTF8: '1'
       PYTHONIOENCODING: utf-8
       DRAFT_TAG: ${{ inputs.draft_tag }}
@@ -61,6 +60,7 @@ jobs:
           assert full.hexdigest() == manifest['sha256']
           with zipfile.ZipFile(output) as archive:
               assert archive.testzip() is None
+              assert not any(name.startswith(('GanganMouse/.build-tools/', 'GanganMouse/target/')) for name in archive.namelist())
               for required in ['GanganMouse.exe', 'README.md', 'LICENSE', 'toolkit/python.exe', '.git/HEAD']:
                   assert 'GanganMouse/' + required in archive.namelist()
               assert archive.read('GanganMouse/runtime/gangan-core-revision').decode().strip() == manifest['commit']
@@ -68,16 +68,18 @@ jobs:
           with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
               env.write('BASE_ZIP=' + str(output) + '\n')
           print('ZIP, part checksums, source revision and CRCs verified.')
-      - name: Build offline using bundled Windows toolchain
+      - name: Verify prebuilt update without Rust toolchain
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           Expand-Archive -LiteralPath $env:BASE_ZIP -DestinationPath (Join-Path $env:BASE_WORK 'verify')
           $base = Join-Path $env:BASE_WORK 'verify/GanganMouse'
+          if (Test-Path (Join-Path $base '.build-tools')) { throw 'User package contains developer tools.' }
           "BASE_ROOT=$base" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           $script = '\\?\' + (Join-Path $base 'scripts/build.ps1')
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Release
-          if ($LASTEXITCODE -ne 0) { throw 'Bundled offline build failed.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Prebuilt update bootstrap failed.' }
+          if (Test-Path (Join-Path $base 'target')) { throw 'Update unexpectedly created compiler output.' }
       - name: Verify packaged runtime startup
         shell: pwsh
         run: |

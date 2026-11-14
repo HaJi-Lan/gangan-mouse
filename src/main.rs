@@ -20,6 +20,9 @@ struct Desktop {
     online: bool,
     updating: bool,
     confirm_update: bool,
+    show_update_source: bool,
+    update_source: update::Source,
+    update_root: std::path::PathBuf,
     restart_required: bool,
     deleting: bool,
     message: String,
@@ -61,12 +64,15 @@ impl Desktop {
         style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(14.0));
         style.spacing.button_padding = egui::vec2(8.0, 4.0);
         cc.egui_ctx.set_style_of(egui::Theme::Light, style);
+        let source = update::Source::load(&layout.root);
+        let source_error = source.as_ref().err().cloned();
         Self {
+            update_root: layout.root.clone(), update_source: source.unwrap_or_default(), show_update_source: false,
             revision: update::revision(&layout), worker: Worker::new(layout), online: false,
             updating: false, confirm_update: false, message: "正在初始化任务运行环境…".into(),
             restart_required: false,
             deleting: false,
-            error: None,
+            error: source_error,
             configs: vec![], selected: String::new(), task: "Script".into(), menu: Value::Null,
             translations: Value::Null, groups: Value::Null, editor: editor::Editor::default(),
             pending_action: None, parameter_search: String::new(), show_help: true, show_logs: true, errors_only: false, follow_logs: true,

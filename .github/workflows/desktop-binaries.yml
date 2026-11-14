@@ -1,0 +1,63 @@
+name: Publish desktop binaries
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-binary-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: 1.100.0-x86_64-pc-windows-gnu
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare Windows GNU toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          rustup toolchain install $env:RUSTUP_TOOLCHAIN --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain installation failed.' }
+          $sysroot = rustc --print sysroot
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot locate compiler.' }
+          "$sysroot/lib/rustlib/x86_64-pc-windows-gnu/bin" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+          'RUSTFLAGS=-C linker=rust-lld -C linker-flavor=ld.lld -C link-self-contained=yes' | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Compile release executable
+        shell: pwsh
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -Release -LocalBuild
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop compilation failed.' }
+      - name: Create exact-commit verification manifest
+        shell: pwsh
+        run: |
+          python scripts/make_binary_manifest.py --exe GanganMouse.exe --commit $env:GITHUB_SHA --output desktop-assets
+          if ($LASTEXITCODE -ne 0) { throw 'Binary manifest validation failed.' }
+          python scripts/collect_rust_notices.py --check
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency license notices are outdated.' }
+          Copy-Item LICENSE "desktop-assets/GanganMouse-$env:GITHUB_SHA-LICENSE.txt"
+          Copy-Item licenses/Rust-dependencies.txt "desktop-assets/GanganMouse-$env:GITHUB_SHA-NOTICES.txt"
+      - name: Publish precompiled update assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release view desktop-builds --json tagName 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create desktop-builds --prerelease --target $env:GITHUB_SHA --title 'Desktop update binaries' --notes 'Precompiled Windows desktop executables and exact-commit SHA-256 manifests for in-app updates. Download the V1.0 base ZIP for first-time use.'
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot prepare binary release.' }
+          }
+          $files = @(Get-ChildItem desktop-assets -File | ForEach-Object { $_.FullName })
+          gh release upload desktop-builds @files --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot publish precompiled updates.' }

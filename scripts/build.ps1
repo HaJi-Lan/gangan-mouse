@@ -1,4 +1,4 @@
-﻿param([switch]$Release)
+﻿param([switch]$Release, [switch]$LocalBuild)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $OutputEncoding = [Console]::OutputEncoding
@@ -11,6 +11,21 @@ if ($taskScriptRoot.StartsWith('\\?\UNC\')) {
     $taskScriptRoot = $taskScriptRoot.Substring(4)
 }
 $projectRoot = Split-Path $taskScriptRoot -Parent
+if (-not $LocalBuild) {
+    # Compatibility entry point for old desktop versions, without local Rust.
+    $taskPython = @('runtime/upstream/toolkit/python.exe', 'toolkit/python.exe') |
+        ForEach-Object { Join-Path $projectRoot $_ } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $taskPython) { throw 'Bundled Python runtime is missing.' }
+    $taskGit = Join-Path (Split-Path $taskPython -Parent) 'Git/cmd/git.exe'
+    if (-not (Test-Path -LiteralPath $taskGit)) { $taskGit = (Get-Command git -ErrorAction Stop).Source }
+    $taskCommit = & $taskGit -C $projectRoot rev-parse HEAD
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve the installed source revision.' }
+    $env:PYTHONUTF8 = '1'
+    $env:PYTHONIOENCODING = 'utf-8'
+    & $taskPython (Join-Path $projectRoot 'scripts/install_prebuilt.py') --root $projectRoot --commit $taskCommit
+    if ($LASTEXITCODE -ne 0) { throw 'Prebuilt program update failed; the current executable is preserved.' }
+    return
+}
 Push-Location $projectRoot
 $taskTranscriptStarted = $false
 try {

@@ -265,6 +265,13 @@ impl eframe::App for Desktop {
                         if self.editor.total() > 0 { ui.label("请先保存或撤销未保存的修改"); }
                         if ui.add_enabled(!self.busy() && self.editor.total() == 0, egui::Button::new("更新软件"))
                             .on_hover_text("有未保存的修改时，请先保存或撤销").clicked() { self.confirm_update = true; ui.close_menu(); }
+                        if ui.add_enabled(!self.busy(), egui::Button::new("更新源设置")).clicked() {
+                            match super::update::Source::load(&self.update_root) {
+                                Ok(source) => self.update_source = source,
+                                Err(error) => { self.error = Some(error); self.update_source = super::update::Source::default(); }
+                            }
+                            self.show_update_source = true; ui.close_menu();
+                        }
                         if ui.add_enabled(!self.busy(), egui::Button::new("重新连接" )).clicked() {
                             self.online = false; self.states.clear(); self.executions.clear(); self.pending_action = Some("reconnect".into());
                             self.message = "正在重新连接…".into(); let _ = self.worker.tx.send(Work::Restart); ui.close_menu();
@@ -390,14 +397,41 @@ impl eframe::App for Desktop {
                 });
             }
         });
+        if self.show_update_source {
+            let mut open = true;
+            let mut close = false;
+            egui::Window::new("更新源设置").open(&mut open).collapsible(false).resizable(false)
+                .default_width(480.0).show(ctx, |ui| {
+                ui.label("源码仓库地址");
+                ui.add(egui::TextEdit::singleline(&mut self.update_source.repository).desired_width(480.0));
+                ui.label("更新分支");
+                ui.add(egui::TextEdit::singleline(&mut self.update_source.branch).desired_width(480.0));
+                ui.label("预编译程序下载地址前缀");
+                ui.add(egui::TextEdit::singleline(&mut self.update_source.downloads).desired_width(480.0));
+                ui.add(egui::Label::new("下载源应提供与源码提交匹配的 Windows 程序和校验清单；可填写镜像地址。编辑后点击保存生效。").wrap());
+                ui.horizontal(|ui| {
+                    if ui.button("保存").clicked() {
+                        match self.update_source.save(&self.update_root) {
+                            Ok(()) => { self.error = None; self.message = "更新源已保存".into(); close = true; }
+                            Err(error) => self.error = Some(error),
+                        }
+                    }
+                    if ui.button("恢复默认").clicked() { self.update_source = super::update::Source::default(); }
+                    if ui.button("取消").clicked() { close = true; }
+                });
+            });
+            if !open || close { self.show_update_source = false; }
+        }
         if self.confirm_update {
             egui::Window::new("更新软件").collapsible(false).resizable(false).show(ctx, |ui| {
-                ui.label("从肝肝鼠仓库获取更新，完成后重新打开软件。");
+                let source = super::update::Source::load(&self.update_root).unwrap_or_default();
+                ui.add(egui::Label::new(format!("从 {} 的 {} 分支获取更新", source.repository, source.branch)).wrap());
+                ui.label("下载已编译程序，完成后重新打开软件，无需本机编译。");
                 ui.label("更新会停止当前任务，配置和日志保留。"); ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     if ui.button("停止任务并更新").clicked() {
                         self.confirm_update = false; self.updating = true; self.online = false;
-                        self.states.clear(); self.executions.clear(); self.message = "正在更新并构建肝肝鼠…".into();
+                        self.states.clear(); self.executions.clear(); self.message = "正在下载并校验肝肝鼠更新…".into();
                         let _ = self.worker.tx.send(Work::Sync);
                     }
                     if ui.button("取消").clicked() { self.confirm_update = false; }
