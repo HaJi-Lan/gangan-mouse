@@ -1,6 +1,6 @@
 """Task selection for this desktop edition, separate from upstream source."""
 REMOVED_CATEGORIES = frozenset({'Daily Task', 'Weekly Task', 'Guild'})
-REMOVED_TASKS = frozenset({'HeroTest', 'FindJade'})
+REMOVED_TASKS = frozenset({'HeroTest', 'FindJade', 'FloatParade'})
 MOVED_TASKS = {'RealmRaid': 'Liver Emperor Exclusive'}
 
 

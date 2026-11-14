@@ -44,7 +44,7 @@ class Script:
         config = Config(self.config_name)
         from module.config.config_menu import ConfigMenu
         from module.config.utils import convert_to_underscore
-        removed = ['DailyTrifles', 'WeeklyTrifles', 'HeroTest', 'FindJade',
+        removed = ['DailyTrifles', 'WeeklyTrifles', 'HeroTest', 'FindJade', 'FloatParade',
                    *(task for task in ConfigMenu().gui_menu_list['Guild'] if task != 'RealmRaid')]
         for key in [*(convert_to_underscore(task) for task in removed), 'orochi']:
             object.__setattr__(getattr(config.model, key).scheduler, 'enable', True)
@@ -134,7 +134,7 @@ class Script:
         self.assertNotIn('Weekly Task', result['data']['menu'])
         self.assertNotIn('Guild', result['data']['menu'])
         tasks = [task for category in result['data']['menu'].values() for task in category]
-        for task in ('HeroTest', 'FindJade'):
+        for task in ('HeroTest', 'FindJade', 'FloatParade'):
             self.assertNotIn(task, tasks)
         self.assertIn('Exploration', tasks)
         self.assertIn('MemoryScrolls', tasks)
@@ -182,7 +182,7 @@ class Script:
         # Read upstream category definitions without importing the live runtime.
         import ast
         tree = ast.parse((UPSTREAM / 'module/config/config_menu.py').read_text('utf-8'))
-        removed = ['HeroTest', 'FindJade']
+        removed = ['HeroTest', 'FindJade', 'FloatParade']
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and isinstance(node.value, ast.List):
                 for target in node.targets:
