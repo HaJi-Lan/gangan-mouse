@@ -40,7 +40,6 @@ struct Desktop {
     icon: egui::TextureHandle,
     states: HashMap<String, i64>,
     logs: VecDeque<(String, String)>,
-    search: String,
     category: String,
     executions: HashMap<String, execution::Execution>,
     show_all_logs: bool,
@@ -57,10 +56,10 @@ impl Desktop {
         cc.egui_ctx.set_fonts(fonts);
         ui::theme(&cc.egui_ctx);
         let mut style = (*cc.egui_ctx.style_of(egui::Theme::Light)).clone();
-        style.spacing.item_spacing = egui::vec2(10.0, 8.0);
-        style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(15.0));
-        style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(15.0));
-        style.spacing.button_padding = egui::vec2(14.0, 7.0);
+        style.spacing.item_spacing = egui::vec2(7.0, 4.0);
+        style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(14.0));
+        style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(14.0));
+        style.spacing.button_padding = egui::vec2(8.0, 4.0);
         cc.egui_ctx.set_style_of(egui::Theme::Light, style);
         Self {
             revision: update::revision(&layout), worker: Worker::new(layout), online: false,
@@ -72,7 +71,7 @@ impl Desktop {
             translations: Value::Null, groups: Value::Null, editor: editor::Editor::default(),
             pending_action: None, parameter_search: String::new(), show_help: true, show_logs: true, errors_only: false, follow_logs: true,
             icon: cc.egui_ctx.load_texture("app", egui::ColorImage::from_rgba_unmultiplied([128, 128], include_bytes!("../assets/app-icon.rgba")), egui::TextureOptions::LINEAR),
-            states: HashMap::new(), logs: VecDeque::new(), search: String::new(), show_all_logs: false,
+            states: HashMap::new(), logs: VecDeque::new(), show_all_logs: false,
             category: String::new(), executions: HashMap::new(),
         }
     }
@@ -207,7 +206,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return check(layout).map_err(|e| std::io::Error::other(e).into());
     }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 820.0]).with_min_inner_size([1050.0, 680.0])
+        viewport: egui::ViewportBuilder::default().with_inner_size([1160.0, 740.0]).with_min_inner_size([1050.0, 640.0])
             .with_icon(egui::IconData { rgba: include_bytes!("../assets/app-icon.rgba").to_vec(), width: 128, height: 128 }),
         renderer: eframe::Renderer::Glow,
         ..Default::default()

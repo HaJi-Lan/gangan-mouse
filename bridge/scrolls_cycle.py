@@ -46,6 +46,23 @@ def task_schema(config, task):
         groups = config.model.script_task(task)
     if 'scrolls' in groups:
         groups['scrolls'] = [field for field in groups['scrolls'] if field['name'] != 'scrolls_cd']
+    hidden_buff_fields = {'buff_gold_50_click', 'buff_gold_100_click',
+                          'buff_exp_50_click', 'buff_exp_100_click'}
+    # Project only the desktop fields; keep the full runtime model and saved values.
+    for name in list(groups):
+        groups[name] = [field for field in groups[name] if field['name'] not in hidden_buff_fields]
+        source_group = COLLECTION_GROUPS.get(name, (task, name))[1]
+        if source_group in ('switch_soul', 'switch_soul_config'):
+            del groups[name]
+        elif source_group == 'scheduler':
+            # The enable field drives the task-title toggle, not the scheduler form.
+            groups[name] = [field for field in groups[name]
+                            if field['name'] in ('enable', 'next_run', 'priority', 'float_time')]
+        elif source_group == 'general_battle_config':
+            groups[name] = [field for field in groups[name]
+                            if field['name'] in ('lock_team_enable', 'random_click_swipt_enable')]
+        if not groups.get(name):
+            groups.pop(name, None)
     return groups
 
 

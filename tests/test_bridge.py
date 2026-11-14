@@ -152,6 +152,18 @@ class Script:
                 result = self.request('schema', config='oas1', task=task)
                 self.assertTrue(result['ok'], result)
                 self.assertTrue(result['data']['groups'])
+                for removed in ('switch_soul', 'switch_soul_config', 'cycle_exploration_soul', 'cycle_raid_soul'):
+                    self.assertNotIn(removed, result['data']['groups'])
+                for group, fields in result['data']['groups'].items():
+                    self.assertFalse({'buff_gold_50_click', 'buff_gold_100_click',
+                                      'buff_exp_50_click', 'buff_exp_100_click'}
+                                     & {field['name'] for field in fields})
+                    if group == 'scheduler':
+                        self.assertEqual({field['name'] for field in fields},
+                                         {'enable', 'next_run', 'priority', 'float_time'})
+                    if group in ('general_battle_config', 'cycle_exploration_battle', 'cycle_raid_battle'):
+                        self.assertEqual([field['name'] for field in fields],
+                                         ['lock_team_enable', 'random_click_swipt_enable'])
 
     def test_fresh_clone_has_chinese_notes_without_generated_upstream_json(self):
         generated = self.fixture / 'module/config/i18n/zh-CN.json'
