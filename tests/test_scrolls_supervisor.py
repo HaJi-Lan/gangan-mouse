@@ -55,6 +55,30 @@ with tempfile.TemporaryDirectory(prefix='oas-scrolls-supervisor-') as tmp:
             runner.config.model.running_task = ''
             saved = json.loads(path.read_text('utf-8'))
             assert saved['exploration']['scrolls']['scrolls_enable'] is False
+        # Moving the raid keeps both its standalone route and collection route.
+        path.write_text(json.dumps(data), encoding='utf-8')
+        phases.clear()
+        def cycle_run(self, phase):
+            phases.append(phase)
+            cycle = self._desktop_scrolls_cycle
+            if phases == ['Exploration']:
+                cycle.requested = 'RealmRaid'
+            elif phase == 'RealmRaid':
+                cycle.depleted = True
+            else:
+                changed = json.loads(path.read_text('utf-8'))
+                changed['exploration']['scrolls']['scrolls_enable'] = False
+                path.write_text(json.dumps(changed), encoding='utf-8')
+            return True
+        with patch.object(script.Script, 'run', cycle_run):
+            runner = object.__new__(DesktopScript)
+            runner.config_name = 'fixture'
+            with patch.object(script.Script, 'run', lambda self, phase: phases.append(phase) or True):
+                assert runner.run('RealmRaid')
+                assert phases == ['RealmRaid']
+            phases.clear()
+            assert runner.run('MemoryScrolls')
+            assert phases == ['Exploration', 'RealmRaid', 'Exploration']
     finally:
         os.chdir(upstream)
 print('Supervisor integration OK, no game access')

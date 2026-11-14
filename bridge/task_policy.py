@@ -1,16 +1,25 @@
 """Task selection for this desktop edition, separate from upstream source."""
-REMOVED_CATEGORIES = frozenset({'Daily Task', 'Weekly Task'})
+REMOVED_CATEGORIES = frozenset({'Daily Task', 'Weekly Task', 'Guild'})
+REMOVED_TASKS = frozenset({'HeroTest', 'FindJade'})
+MOVED_TASKS = {'RealmRaid': 'Liver Emperor Exclusive'}
 
 
 def task_selection():
     from module.config.config_menu import ConfigMenu
     from module.config.utils import convert_to_underscore
     menu = ConfigMenu().gui_menu_list
-    removed = {convert_to_underscore(task)
-               for category, tasks in menu.items() if category in REMOVED_CATEGORIES
-               for task in tasks}
-    return {category: tasks for category, tasks in menu.items()
-            if category not in REMOVED_CATEGORIES}, removed
+    removed = {convert_to_underscore(task) for task in REMOVED_TASKS}
+    removed.update(convert_to_underscore(task)
+                   for category, tasks in menu.items() if category in REMOVED_CATEGORIES
+                   for task in tasks if task not in MOVED_TASKS)
+    selected = {category: [task for task in tasks if convert_to_underscore(task) not in removed
+                          and task not in MOVED_TASKS]
+                for category, tasks in menu.items() if category not in REMOVED_CATEGORIES}
+    available = {task for tasks in menu.values() for task in tasks}
+    for task, category in MOVED_TASKS.items():
+        if task in available:
+            selected.setdefault(category, []).append(task)
+    return selected, removed
 
 
 def install_runtime_policy():

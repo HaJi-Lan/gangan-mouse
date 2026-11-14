@@ -42,16 +42,19 @@ class Script:
     def loop(self):
         from module.config.config import Config
         config = Config(self.config_name)
-        for key in ('daily_trifles', 'weekly_trifles', 'orochi'):
+        from module.config.config_menu import ConfigMenu
+        from module.config.utils import convert_to_underscore
+        removed = ['DailyTrifles', 'WeeklyTrifles', 'HeroTest', 'FindJade',
+                   *(task for task in ConfigMenu().gui_menu_list['Guild'] if task != 'RealmRaid')]
+        for key in [*(convert_to_underscore(task) for task in removed), 'orochi']:
             object.__setattr__(getattr(config.model, key).scheduler, 'enable', True)
         config.update_scheduler()
         scheduled = {task.command for task in config.pending_task + config.waiting_task}
-        assert 'DailyTrifles' not in scheduled and 'WeeklyTrifles' not in scheduled
+        assert not set(removed) & scheduled
         assert 'Orochi' in scheduled
-        assert config.task_call('DailyTrifles', force_call=True) is False
-        assert config.task_call('WeeklyTrifles', force_call=True) is False
-        assert self.run('DailyTrifles') is True
-        assert self.run('WeeklyTrifles') is True
+        for task in removed:
+            assert config.task_call(task, force_call=True) is False
+            assert self.run(task) is True
         object.__setattr__(config.model.exploration.scheduler, 'enable', True)
         object.__setattr__(config.model.realm_raid.scheduler, 'enable', True)
         object.__setattr__(config.model.memory_scrolls.scheduler, 'enable', True)
@@ -129,6 +132,14 @@ class Script:
         self.assertIn('MetaDemon', result['data']['menu']['Activity Task'])
         self.assertNotIn('Daily Task', result['data']['menu'])
         self.assertNotIn('Weekly Task', result['data']['menu'])
+        self.assertNotIn('Guild', result['data']['menu'])
+        tasks = [task for category in result['data']['menu'].values() for task in category]
+        for task in ('HeroTest', 'FindJade'):
+            self.assertNotIn(task, tasks)
+        self.assertIn('Exploration', tasks)
+        self.assertIn('MemoryScrolls', tasks)
+        self.assertIn('RealmRaid', result['data']['menu']['Liver Emperor Exclusive'])
+        self.assertEqual(tasks.count('RealmRaid'), 1)
         self.assertNotEqual(result['data']['translations'].get('Script'), None)
         self.assertIn('desktop_enable_help', result['data']['translations'])
         self.assertEqual(result['data']['translations']['scrolls_threshold'], '突破卷数量大于等于 X 时才会挑战')
@@ -159,13 +170,14 @@ class Script:
         # Read upstream category definitions without importing the live runtime.
         import ast
         tree = ast.parse((UPSTREAM / 'module/config/config_menu.py').read_text('utf-8'))
-        removed = []
+        removed = ['HeroTest', 'FindJade']
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and isinstance(node.value, ast.List):
                 for target in node.targets:
-                    if isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant) and target.slice.value in ('Daily Task', 'Weekly Task'):
+                    if isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant) and target.slice.value in ('Daily Task', 'Weekly Task', 'Guild'):
                         removed.extend(ast.literal_eval(node.value))
-        self.assertEqual(len(removed), 19)
+        removed = [task for task in removed if task != 'RealmRaid']
+        self.assertIn('Hunt', removed)
         for task in removed:
             with self.subTest(task=task):
                 self.assertFalse(self.request('schema', config='oas1', task=task)['ok'])
@@ -197,6 +209,11 @@ class Script:
             fields = self.request('schema', config=name, task=task)['data']['groups'][group]
             self.assertEqual(next(f['value'] for f in fields if f['name'] == argument), expected)
         saved = json.loads((self.fixture / f'config/{name}.json').read_text('utf-8'))
+        self.assertEqual(saved['realm_raid']['raid_config']['number_attack'], 9)
+        result = self.request('set', config=name, task='RealmRaid', group='raid_config', argument='number_attack', value=7)
+        self.assertTrue(result['ok'], result)
+        fields = self.request('schema', config=name, task='MemoryScrolls')['data']['groups']['raid_config']
+        self.assertEqual(next(f['value'] for f in fields if f['name'] == 'number_attack'), 7)
         self.assertTrue(saved['exploration']['scrolls']['scrolls_transition_delay_enable'])
         self.assertFalse(self.request('set', config=name, task='MemoryScrolls', group='scrolls', argument='scrolls_threshold', value=31)['ok'])
         self.assertFalse(self.request('set', config=name, task='Exploration', group='scrolls', argument='scrolls_cd', value='00 00:30:00')['ok'])

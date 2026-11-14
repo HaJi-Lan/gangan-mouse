@@ -161,7 +161,7 @@ class Runtime:
     def check_task(self, task):
         from module.config.utils import convert_to_underscore
         if convert_to_underscore(task) in self.removed_tasks:
-            raise ValueError('日常任务和每周任务已从此版本移除')
+            raise ValueError('此任务已从当前版本移除')
 
     def stop(self, name):
         item = self.processes.pop(name, None)
