@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       draft_tag:
-        description: Existing draft release tag for the validated base ZIP
+        description: Existing draft tag containing ZIP parts and checksum manifest
         required: true
         type: string
 
@@ -22,9 +22,8 @@ jobs:
       PYTHONUTF8: '1'
       PYTHONIOENCODING: utf-8
       DRAFT_TAG: ${{ inputs.draft_tag }}
-      SOURCE_COMMIT: ${{ github.sha }}
     steps:
-      - name: Download base and verify draft destination
+      - name: Download staged ZIP parts and manifest
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -32,39 +31,60 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or -not $draft.isDraft) { throw 'Destination must be an existing draft.' }
           $work = Join-Path $env:RUNNER_TEMP 'gangan-base'
           New-Item -ItemType Directory -Path $work | Out-Null
-          gh release download V1.0 --pattern 'GanganMouse-V1.0-Windows-x64.zip*' --dir $work
-          if ($LASTEXITCODE -ne 0) { throw 'Cannot download the original base.' }
-          $zip = Join-Path $work 'GanganMouse-V1.0-Windows-x64.zip'
-          $expected = ((Get-Content "$zip.sha256").Trim() -split '\s+')[0]
-          if ((Get-FileHash $zip -Algorithm SHA256).Hash -ine $expected) { throw 'Original base checksum mismatch.' }
-          Expand-Archive -LiteralPath $zip -DestinationPath $work
-          $base = Join-Path $work 'GanganMouse'
-          git -C $base fetch origin main
-          if ($LASTEXITCODE -ne 0) { throw 'Source fetch failed.' }
-          git -C $base merge --ff-only $env:SOURCE_COMMIT
-          if ($LASTEXITCODE -ne 0) { throw 'Source update failed.' }
-          if (git -C $base status --porcelain) { throw 'Base source is not clean.' }
-          [IO.File]::WriteAllText((Join-Path $base 'runtime/gangan-core-revision'), $env:SOURCE_COMMIT)
-          "BASE_ROOT=$base" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          gh release download $env:DRAFT_TAG --pattern '*.part-*' --pattern '*.parts.json' --dir $work
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot download staged ZIP parts.' }
           "BASE_WORK=$work" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Assemble and validate complete ZIP
+        shell: python
+        run: |
+          import hashlib, json, os, zipfile
+          from pathlib import Path
+          work = Path(os.environ['BASE_WORK'])
+          name = 'GanganMouse-V1.0-Windows-x64.zip'
+          manifest = json.loads((work / (name + '.parts.json')).read_text('utf-8'))
+          assert manifest['name'] == name
+          output = work / name
+          full = hashlib.sha256()
+          with output.open('wb') as target:
+              for part in manifest['parts']:
+                  assert Path(part['name']).name == part['name'] and part['name'].startswith(name + '.part-')
+                  source = work / part['name']
+                  assert source.stat().st_size == part['size']
+                  digest = hashlib.sha256()
+                  with source.open('rb') as stream:
+                      for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                          digest.update(chunk)
+                          full.update(chunk)
+                          target.write(chunk)
+                  assert digest.hexdigest() == part['sha256']
+          assert output.stat().st_size == manifest['size']
+          assert full.hexdigest() == manifest['sha256']
+          with zipfile.ZipFile(output) as archive:
+              assert archive.testzip() is None
+              for required in ['GanganMouse.exe', 'README.md', 'LICENSE', 'toolkit/python.exe', '.git/HEAD']:
+                  assert 'GanganMouse/' + required in archive.namelist()
+              assert archive.read('GanganMouse/runtime/gangan-core-revision').decode().strip() == manifest['commit']
+          output.with_suffix('.zip.sha256').write_text(full.hexdigest() + '  ' + name + '\n', encoding='ascii')
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+              env.write('BASE_ZIP=' + str(output) + '\n')
+          print('ZIP, part checksums, source revision and CRCs verified.')
       - name: Build offline using bundled Windows toolchain
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $script = '\\?\' + (Join-Path $env:BASE_ROOT 'scripts/build.ps1')
+          Expand-Archive -LiteralPath $env:BASE_ZIP -DestinationPath (Join-Path $env:BASE_WORK 'verify')
+          $base = Join-Path $env:BASE_WORK 'verify/GanganMouse'
+          "BASE_ROOT=$base" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          $script = '\\?\' + (Join-Path $base 'scripts/build.ps1')
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Release
           if ($LASTEXITCODE -ne 0) { throw 'Bundled offline build failed.' }
-      - name: Verify startup and package base ZIP
+      - name: Verify packaged runtime startup
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $env:OAS_DESKTOP_ROOT = $env:BASE_ROOT
           $check = Start-Process -FilePath (Join-Path $env:BASE_ROOT 'GanganMouse.exe') -ArgumentList '--check' -WindowStyle Hidden -Wait -PassThru
           if ($check.ExitCode -ne 0) { throw 'Packaged program runtime check failed.' }
-          $output = Join-Path $env:BASE_WORK 'output/GanganMouse-V1.0-Windows-x64.zip'
-          & python (Join-Path $env:BASE_ROOT 'scripts/package_release.py') zip --stage $env:BASE_ROOT --output $output
-          if ($LASTEXITCODE -ne 0) { throw 'Base archive validation failed.' }
-          "BASE_ZIP=$output" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
       - name: Upload validated ZIP and checksum to draft only
         shell: pwsh
         run: |
