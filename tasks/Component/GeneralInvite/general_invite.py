@@ -6,7 +6,7 @@ import numpy as np
 
 from enum import Enum
 from cached_property import cached_property
-from datetime import timedelta, time
+from datetime import time
 
 from module.base.timer import Timer
 from tasks.base_task import BaseTask
@@ -57,6 +57,8 @@ class GeneralInvite(BaseTask, GeneralInviteAssets):
             logger.warning('Not enter invite page')
             return False
         if is_first:
+            # A newly created room must not inherit a previous room's type.
+            self.__dict__.pop('room_type', None)
             _ = self.room_type
             self.timer_invite = Timer(20)
             self.timer_invite.start()
@@ -70,6 +72,7 @@ class GeneralInvite(BaseTask, GeneralInviteAssets):
         wait_second = config.wait_time.second + config.wait_time.minute * 60
         self.timer_wait = Timer(wait_second)
         self.timer_wait.start()
+        ready_frames = 0
         while 1:
             self.screenshot()
             if self.timer_wait.reached():
@@ -80,6 +83,7 @@ class GeneralInvite(BaseTask, GeneralInviteAssets):
                 return False
 
             if not self.is_in_room():
+                ready_frames = 0
                 continue
 
             if self.timer_emoji and self.timer_emoji.reached():
@@ -93,14 +97,12 @@ class GeneralInvite(BaseTask, GeneralInviteAssets):
                 logger.info('Start challenge and this room can only invite one friend')
                 fire = True
             # 如果这个房间最多容纳三个人（意思是可以邀请两个人），且设定邀请一个就开启挑战，那就开启挑战
-            elif self.room_type == RoomType.NORMAL_3 and config.invite_number == InviteNumber.ONE and not self.appear(self.I_ADD_1):
-                logger.info('Start challenge and user only invite one friend')
-                fire = True
-            # 如果这个房间最多容纳三个人（意思是可以邀请两个人），且设定邀请两个就开启挑战，那就开启挑战
-            elif self.room_type == RoomType.NORMAL_3 \
-                    and config.invite_number == InviteNumber.TWO and not self.appear(self.I_ADD_2):
-                logger.info('Start challenge and user invite two friends')
-                fire = True
+            elif self.room_type == RoomType.NORMAL_3:
+                # Either teammate slot may fill first. A missed plus sign alone
+                # is insufficient: require an enabled challenge button too.
+                ready = self.normal_three_ready(config.invite_number)
+                ready_frames = ready_frames + 1 if ready else 0
+                fire = ready_frames >= 2
             # 如果这个房间是五人的，且设定邀请一个就开启挑战，那就开启挑战
             elif self.room_type == RoomType.NORMAL_5 \
                     and config.invite_number == InviteNumber.ONE and not self.appear(self.I_ADD_5_1):
@@ -118,8 +120,13 @@ class GeneralInvite(BaseTask, GeneralInviteAssets):
 
             # 点击挑战
             if fire:
+                logger.info(f'队友已到齐，开始挑战（邀请人数：{config.invite_number.value}）')
                 self.click_fire()
                 return True
+
+            if ready_frames:
+                # Confirm a second frame before opening another invite dialog.
+                continue
 
             if self.timer_invite and self.timer_invite.reached():
                 if is_first:
@@ -129,6 +136,25 @@ class GeneralInvite(BaseTask, GeneralInviteAssets):
                     logger.info('Wait for 30s and invite again')
                     self.timer_invite = None
                 self.invite_friends(config)
+
+    def normal_three_ready(self, invite_number: InviteNumber) -> bool:
+        empty_left = self.appear(self.I_ADD_1)
+        empty_right = self.appear(self.I_ADD_2)
+        enough = (not empty_left or not empty_right) if invite_number == InviteNumber.ONE else (
+            not empty_left and not empty_right)
+        if not enough or not self.appear(self.I_FIRE):
+            return False
+        enabled_score = self.I_FIRE.last_score
+        if not self.appear(self.I_FIRE_FAIL):
+            return True
+        # Both templates can match the same button. Compare their scores
+        # instead of rejecting an enabled button on a weaker gray match.
+        return enabled_score > self.I_FIRE_FAIL.last_score + 0.05
+
+    def invite_room_ready(self) -> bool:
+        """Return to the room loop when its invite dialog has disappeared."""
+        return (not self.appear(self.I_INVITE_ENSURE)
+                and self.is_in_room(is_screenshot=False))
 
     def ensure_enter(self) -> bool:
         """
@@ -212,6 +238,10 @@ class GeneralInvite(BaseTask, GeneralInviteAssets):
 
         :return:
         """
+        expected = getattr(self, 'invite_room_type', None)
+        if expected is not None:
+            logger.info(f'Room type: {expected} (task-defined)')
+            return expected
         self.screenshot()
         room_type = self.check_room_type(image=self.device.image)
         logger.info(f'Room type: {room_type}')
@@ -314,6 +344,8 @@ class GeneralInvite(BaseTask, GeneralInviteAssets):
             return False
 
         self.screenshot()
+        if self.invite_room_ready():
+            return False
         self.O_FRIEND_NAME_1.keyword = name
         self.O_FRIEND_NAME_2.keyword = name
         appear_1 = self.ocr_appear_click(self.O_FRIEND_NAME_1, interval=2, exact=True)
@@ -324,12 +356,39 @@ class GeneralInvite(BaseTask, GeneralInviteAssets):
 
         while appear_1 or appear_2:
             self.screenshot()
+            if self.invite_room_ready():
+                return False
             if self.appear(self.I_SELECTED):
                 break
             appear_1 = self.ocr_appear_click(self.O_FRIEND_NAME_1, interval=2, exact=True)
             appear_2 = self.ocr_appear_click(self.O_FRIEND_NAME_2, interval=2, exact=True)
 
         return True
+
+    def select_friend_tab(self, index: int) -> bool:
+        """Select one list tab, or yield when the invite dialog disappears."""
+        tabs = ((self.I_FLAG_1_ON, self.I_FLAG_1_OFF),
+                (self.I_FLAG_2_ON, self.I_FLAG_2_OFF),
+                (self.I_FLAG_3_ON, self.I_FLAG_3_OFF),
+                (self.I_FLAG_4_ON, self.I_FLAG_4_OFF))
+        if index >= len(tabs):
+            return True
+        selected, unselected = tabs[index]
+        while True:
+            self.screenshot()
+            if self.invite_room_ready():
+                return False
+            if self.appear(selected):
+                return True
+            self.appear_then_click(unselected, interval=1)
+
+    def select_friend_with_retry(self, name: str) -> bool:
+        selected = False
+        for _ in range(2):
+            sleep(1)
+            if not selected:
+                selected = self.detect_select(name)
+        return selected
 
     def invite_friend(self, name: str = None, find_mode: FindMode = FindMode.AUTO_FIND) -> bool:
         """
@@ -390,22 +449,11 @@ class GeneralInvite(BaseTask, GeneralInviteAssets):
                 logger.warning('No recent friend')
                 return False
             recent_index = friend_class.index('最近')
-            while recent_index == 1:
-                self.screenshot()
-                if self.appear(self.I_FLAG_2_ON):
-                    break
-                if self.appear_then_click(self.I_FLAG_2_OFF, interval=1):
-                    continue
+            if recent_index == 1 and not self.select_friend_tab(recent_index):
+                return True
 
             logger.info(f'Now find friend in ”最近“')
-            sleep(1)
-            if not is_select:
-                if self.detect_select(name):
-                    is_select = True
-            sleep(1)
-            if not is_select:
-                if self.detect_select(name):
-                    is_select = True
+            is_select = self.select_friend_with_retry(name)
 
         for index in range(len(friend_class)):
             # 如果不是自动寻找，就跳过
@@ -414,43 +462,13 @@ class GeneralInvite(BaseTask, GeneralInviteAssets):
             # 如果已经选中了好友，就不需要再选中了
             if is_select:
                 continue
-            # 首先切换到不同的好友列表
-            while index == 0:
-                self.screenshot()
-                if self.appear(self.I_FLAG_1_ON):
-                    break
-                if self.appear_then_click(self.I_FLAG_1_OFF, interval=1):
-                    continue
-            while index == 1:
-                self.screenshot()
-                if self.appear(self.I_FLAG_2_ON):
-                    break
-                if self.appear_then_click(self.I_FLAG_2_OFF, interval=1):
-                    continue
-            while index == 2:
-                self.screenshot()
-                if self.appear(self.I_FLAG_3_ON):
-                    break
-                if self.appear_then_click(self.I_FLAG_3_OFF, interval=1):
-                    continue
-            while index == 3:
-                self.screenshot()
-                if self.appear(self.I_FLAG_4_ON):
-                    break
-                if self.appear_then_click(self.I_FLAG_4_OFF, interval=1):
-                    continue
+            if not self.select_friend_tab(index):
+                return True
 
             # 选中好友， 在这里游戏获取在线的好友并不是很快，根据不同的设备会有不同的时间，而且没有什么元素提供我们来判断
             # 所以这里就直接等待一段时间
             logger.info(f'Now find friend in {friend_class[index]}')
-            sleep(1)
-            if not is_select:
-                if self.detect_select(name):
-                    is_select = True
-            sleep(1)
-            if not is_select:
-                if self.detect_select(name):
-                    is_select = True
+            is_select = self.select_friend_with_retry(name)
 
         # 点击确定
         logger.info('Click invite ensure')
@@ -653,4 +671,3 @@ if __name__ == '__main__':
     # t.run_invite(c.orochi.invite_config, is_first=True)
     t.screenshot()
     print(t.appear(t.I_FIRE, threshold=0.8))
-
