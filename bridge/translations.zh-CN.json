@@ -1,0 +1,12 @@
+{
+  "scrolls_threshold": "突破卷数量大于等于 X 时才会挑战",
+  "scrolls_threshold_help": "开启绘卷模式后，突破券数量大于等于 X 且大于 0 时，从探索切换到个人突破；券用完后返回探索。数量小于 X 时继续探索；X=0 时也必须有券才会切换。",
+  "scrolls_enable_help": "手动开启探索＋个人突破绘卷循环。探索和绘卷集合页共享此开关；关闭后不再自动切换。",
+  "scrolls_transition_delay_enable": "切换间隔：随机等待 5～25 秒",
+  "scrolls_transition_delay_enable_help": "手动开启后，探索→个人突破、个人突破→探索时各随机等待 5～25 秒；关闭后立即切换。替代原来的分钟间隔，不延后整轮探索。",
+  "MemoryScrolls_help": "探索＋个人突破的绘卷模式集合体。开启调度器和绘卷模式后，从探索开始，有券且券数达到 X 时挑战个人突破，用完券继续探索。此页与探索、阴阳寮→个人突破共享参数；不再执行原绘卷碎片捐献功能。",
+  "cycle_exploration_battle": "探索战斗设置",
+  "cycle_exploration_soul": "探索御魂切换",
+  "cycle_raid_battle": "个人突破战斗设置",
+  "cycle_raid_soul": "个人突破御魂切换"
+}
