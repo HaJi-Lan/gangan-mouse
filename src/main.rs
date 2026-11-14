@@ -3,6 +3,7 @@ mod layout;
 mod instance;
 mod help;
 mod editor;
+mod execution;
 mod ui;
 mod runtime;
 mod update;
@@ -40,6 +41,8 @@ struct Desktop {
     states: HashMap<String, i64>,
     logs: VecDeque<(String, String)>,
     search: String,
+    category: String,
+    executions: HashMap<String, execution::Execution>,
     show_all_logs: bool,
 }
 
@@ -67,9 +70,10 @@ impl Desktop {
             error: None,
             configs: vec![], selected: String::new(), task: "Script".into(), menu: Value::Null,
             translations: Value::Null, groups: Value::Null, editor: editor::Editor::default(),
-            pending_action: None, parameter_search: String::new(), show_help: true, show_logs: false, errors_only: false, follow_logs: true,
+            pending_action: None, parameter_search: String::new(), show_help: true, show_logs: true, errors_only: false, follow_logs: true,
             icon: cc.egui_ctx.load_texture("app", egui::ColorImage::from_rgba_unmultiplied([128, 128], include_bytes!("../assets/app-icon.rgba")), egui::TextureOptions::LINEAR),
             states: HashMap::new(), logs: VecDeque::new(), search: String::new(), show_all_logs: false,
+            category: String::new(), executions: HashMap::new(),
         }
     }
     fn label(&self, key: &str) -> String {
@@ -98,16 +102,24 @@ impl Desktop {
                     self.worker.request(json!({"command":"hello"}));
                 }
                 "log" => self.log(event["config"].as_str().unwrap_or("").into(), event["text"].as_str().unwrap_or("").into()),
-                "state" => { self.states.insert(event["config"].as_str().unwrap_or("").into(), event["state"].as_i64().unwrap_or(0)); }
+                "state" => {
+                    let name = event["config"].as_str().unwrap_or("").to_string();
+                    let state = event["state"].as_i64().unwrap_or(0);
+                    if state == 0 { self.executions.remove(&name); }
+                    self.states.insert(name, state);
+                }
                 "task" => {
+                    let name = event["config"].as_str().unwrap_or("").to_string();
+                    self.executions.entry(name.clone()).or_default().apply(&event["data"]);
                     if let Some(state) = event["data"]["state"].as_i64() {
-                        self.states.insert(event["config"].as_str().unwrap_or("").into(), state);
+                        if state == 0 { self.executions.remove(&name); }
+                        self.states.insert(name, state);
                     }
                 }
-                "fatal" => { self.online = false; self.updating = false; self.deleting = false; self.pending_action = None; self.editor.cancel(); self.states.clear(); self.error = Some(event["error"].as_str().unwrap_or("运行环境退出").into()); }
+                "fatal" => { self.online = false; self.updating = false; self.deleting = false; self.pending_action = None; self.editor.cancel(); self.states.clear(); self.executions.clear(); self.error = Some(event["error"].as_str().unwrap_or("运行环境退出").into()); }
                 "error" => { self.pending_action = None; self.editor.cancel(); self.updating = false; self.error = Some(event["error"].as_str().unwrap_or("操作失败").into()); }
                 "updated" => {
-                    self.states.clear();
+                    self.states.clear(); self.executions.clear();
                     self.restart_required |= event["data"]["restart_required"] == true;
                     self.message = if self.restart_required { "肝肝鼠更新完成，请关闭并重新打开软件。" } else { "肝肝鼠已是最新版本。" }.into();
                     self.revision = event["data"]["after"].as_str().unwrap_or("").chars().take(8).collect();
@@ -140,7 +152,7 @@ impl Desktop {
                             self.groups = Value::Null;
                             if event["command"] == "delete" {
                                 self.deleting = false;
-                                if let Some(name) = data["deleted"].as_str() { self.states.remove(name); self.editor.discard(name); }
+                                if let Some(name) = data["deleted"].as_str() { self.states.remove(name); self.executions.remove(name); self.editor.discard(name); }
                                 self.groups = Value::Null;
                                 self.log(String::new(), format!("已删除配置 {}", data["deleted"]));
                             }
@@ -195,7 +207,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return check(layout).map_err(|e| std::io::Error::other(e).into());
     }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1180.0, 820.0]).with_min_inner_size([900.0, 620.0])
+        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 820.0]).with_min_inner_size([1050.0, 680.0])
             .with_icon(egui::IconData { rgba: include_bytes!("../assets/app-icon.rgba").to_vec(), width: 128, height: 128 }),
         renderer: eframe::Renderer::Glow,
         ..Default::default()

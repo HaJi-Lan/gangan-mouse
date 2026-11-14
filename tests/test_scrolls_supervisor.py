@@ -14,6 +14,7 @@ class ScrollsSupervisorTests(unittest.TestCase):
 import json, os, sys, tempfile
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 root = Path.cwd()
 sys.path.insert(0, str(root / 'bridge'))
 upstream = next(path for path in (root / 'runtime/upstream', root / 'OAS', root)
@@ -73,12 +74,22 @@ with tempfile.TemporaryDirectory(prefix='oas-scrolls-supervisor-') as tmp:
         with patch.object(script.Script, 'run', cycle_run):
             runner = object.__new__(DesktopScript)
             runner.config_name = 'fixture'
+            events = []
+            runner.state_queue = SimpleNamespace(put=events.append)
             with patch.object(script.Script, 'run', lambda self, phase: phases.append(phase) or True):
                 assert runner.run('RealmRaid')
                 assert phases == ['RealmRaid']
+                assert events[0]['execution'] == {'task': 'RealmRaid', 'owner': 'RealmRaid'}
+                assert events[-1]['execution'] == {'task': '', 'owner': ''}
             phases.clear()
+            events.clear()
             assert runner.run('MemoryScrolls')
             assert phases == ['Exploration', 'RealmRaid', 'Exploration']
+            actual = [event['execution'] for event in events
+                      if event['execution']['task'] in ('Exploration', 'RealmRaid')]
+            assert [event['task'] for event in actual] == phases
+            assert all(event['owner'] == 'MemoryScrolls' for event in actual)
+            assert events[-1]['execution'] == {'task': '', 'owner': ''}
     finally:
         os.chdir(upstream)
 print('Supervisor integration OK, no game access')

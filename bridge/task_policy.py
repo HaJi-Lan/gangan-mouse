@@ -65,10 +65,22 @@ def install_runtime_policy():
     from script import Script as UpstreamScript
 
     class Script(UpstreamScript):
+        def report_execution(self, task, owner=''):
+            queue = getattr(self, 'state_queue', None)
+            if queue is not None:
+                queue.put({'execution': {'task': task, 'owner': owner}})
+
         def run(self, command):
             if convert_to_underscore(command) in removed:
                 logger.info(f'已移除任务，跳过执行：{command}')
                 return True
+            self.report_execution(command, command)
+            try:
+                return self.run_enabled(command)
+            finally:
+                self.report_execution('')
+
+        def run_enabled(self, command):
             key = convert_to_underscore(command)
             if key in ('memory_scrolls', 'exploration'):
                 from scrolls_cycle import ScrollsCycle, attach_cycle_loader
@@ -82,11 +94,13 @@ def install_runtime_policy():
                         self._desktop_scrolls_cycle = cycle
                         cycle_context['cycle'] = cycle
                     def run_leg(phase):
+                        self.report_execution(phase, command)
                         self.__dict__.pop('config', None)
                         self.config.model.running_task = phase
                         try:
                             return super(Script, self).run(phase)
                         finally:
+                            self.report_execution('', command)
                             # The upstream loop saves running_task after run().
                             # Reload first so that save cannot restore an old
                             # manual switch value edited while this leg ran.
