@@ -85,7 +85,7 @@ def archive(source, output):
             continue
         paths.append(path)
     assert not any('.git-credentials' in p.parts or p.name in ('credentials', 'credentials.toml', '.env') for p in paths)
-    with zipfile.ZipFile(output, 'x', zipfile.ZIP_DEFLATED, compresslevel=6, allowZip64=True) as bundle:
+    with zipfile.ZipFile(output, 'x', zipfile.ZIP_DEFLATED, compresslevel=6, allowZip64=True, strict_timestamps=False) as bundle:
         for index, path in enumerate(sorted(paths)):
             bundle.write(path, 'GanganMouse/' + path.relative_to(source).as_posix())
             if index % 2000 == 0:
