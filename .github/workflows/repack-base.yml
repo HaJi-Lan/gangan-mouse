@@ -1,0 +1,76 @@
+name: Repack Windows base release
+
+on:
+  workflow_dispatch:
+    inputs:
+      draft_tag:
+        description: Existing draft release tag for the validated base ZIP
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  repack:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      CARGO_NET_OFFLINE: 'true'
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      DRAFT_TAG: ${{ inputs.draft_tag }}
+      SOURCE_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Download base and verify draft destination
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $draft = gh release view $env:DRAFT_TAG --json isDraft | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $draft.isDraft) { throw 'Destination must be an existing draft.' }
+          $work = Join-Path $env:RUNNER_TEMP 'gangan-base'
+          New-Item -ItemType Directory -Path $work | Out-Null
+          gh release download V1.0 --pattern 'GanganMouse-V1.0-Windows-x64.zip*' --dir $work
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot download the original base.' }
+          $zip = Join-Path $work 'GanganMouse-V1.0-Windows-x64.zip'
+          $expected = ((Get-Content "$zip.sha256").Trim() -split '\s+')[0]
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash -ine $expected) { throw 'Original base checksum mismatch.' }
+          Expand-Archive -LiteralPath $zip -DestinationPath $work
+          $base = Join-Path $work 'GanganMouse'
+          git -C $base fetch origin main
+          if ($LASTEXITCODE -ne 0) { throw 'Source fetch failed.' }
+          git -C $base merge --ff-only $env:SOURCE_COMMIT
+          if ($LASTEXITCODE -ne 0) { throw 'Source update failed.' }
+          if (git -C $base status --porcelain) { throw 'Base source is not clean.' }
+          [IO.File]::WriteAllText((Join-Path $base 'runtime/gangan-core-revision'), $env:SOURCE_COMMIT)
+          "BASE_ROOT=$base" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "BASE_WORK=$work" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Build offline using bundled Windows toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $script = '\\?\' + (Join-Path $env:BASE_ROOT 'scripts/build.ps1')
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Release
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled offline build failed.' }
+      - name: Verify startup and package base ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:OAS_DESKTOP_ROOT = $env:BASE_ROOT
+          $check = Start-Process -FilePath (Join-Path $env:BASE_ROOT 'GanganMouse.exe') -ArgumentList '--check' -WindowStyle Hidden -Wait -PassThru
+          if ($check.ExitCode -ne 0) { throw 'Packaged program runtime check failed.' }
+          $output = Join-Path $env:BASE_WORK 'output/GanganMouse-V1.0-Windows-x64.zip'
+          & python (Join-Path $env:BASE_ROOT 'scripts/package_release.py') zip --stage $env:BASE_ROOT --output $output
+          if ($LASTEXITCODE -ne 0) { throw 'Base archive validation failed.' }
+          "BASE_ZIP=$output" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Upload validated ZIP and checksum to draft only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $draft = gh release view $env:DRAFT_TAG --json isDraft | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $draft.isDraft) { throw 'Destination is no longer a draft.' }
+          gh release upload $env:DRAFT_TAG $env:BASE_ZIP "$env:BASE_ZIP.sha256" --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Draft asset upload failed.' }
+          Write-Output "Uploaded ZIP and checksum to draft $env:DRAFT_TAG. Publication is a separate step."

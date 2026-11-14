@@ -96,7 +96,11 @@ def archive(source, output):
         for required in ('GanganMouse.exe', 'README.md', 'LICENSE', '.git/HEAD',
                          'toolkit/python.exe', 'toolkit/Git/cmd/git.exe', '.build-tools/cargo/bin/cargo.exe'):
             assert 'GanganMouse/' + required in names, required
-    digest = hashlib.file_digest(output.open('rb'), 'sha256').hexdigest()
+    hasher = hashlib.sha256()
+    with output.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            hasher.update(chunk)
+    digest = hasher.hexdigest()
     output.with_suffix('.zip.sha256').write_text(f'{digest}  {output.name}\n', encoding='ascii')
     print(json.dumps({'zip': str(output), 'bytes': output.stat().st_size, 'sha256': digest}, ensure_ascii=False), flush=True)
 
