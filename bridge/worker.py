@@ -250,6 +250,7 @@ def main():
             except Exception as exc:
                 traceback.print_exc(file=sys.stderr)
                 emit(dict(event='response', command=request.get('command') if isinstance(request, dict) else None,
+                          id=request.get('id') if isinstance(request, dict) else None,
                           ok=False, error=str(exc)))
             runtime.poll()
     except Exception as exc:

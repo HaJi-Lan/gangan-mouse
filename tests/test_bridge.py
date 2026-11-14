@@ -222,6 +222,12 @@ class Script:
         result = self.request('schema', config='../outside', task='Script')
         self.assertFalse(result['ok'])
 
+    def test_failed_save_preserves_request_id(self):
+        result = self.request('set', id='save-test', config='oas1', task='Exploration',
+                              group='scrolls', argument='scrolls_threshold', value=31)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['id'], 'save-test')
+
     def test_delete_without_backup_stops_its_task(self):
         name = self.request('create')['data']['selected']
         source = self.fixture / f'config/{name}.json'

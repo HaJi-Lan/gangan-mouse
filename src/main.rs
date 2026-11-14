@@ -2,12 +2,14 @@
 mod layout;
 mod instance;
 mod help;
+mod editor;
+mod ui;
 mod runtime;
 mod update;
 
 use eframe::egui;
 use layout::Layout;
-use runtime::{Work, Worker};
+use runtime::Worker;
 use serde_json::{json, Value};
 use std::{collections::{HashMap, VecDeque}, time::{Duration, Instant}};
 
@@ -27,7 +29,14 @@ struct Desktop {
     menu: Value,
     translations: Value,
     groups: Value,
-    edits: HashMap<String, Value>,
+    editor: editor::Editor,
+    pending_action: Option<String>,
+    parameter_search: String,
+    show_help: bool,
+    show_logs: bool,
+    errors_only: bool,
+    follow_logs: bool,
+    icon: egui::TextureHandle,
     states: HashMap<String, i64>,
     logs: VecDeque<(String, String)>,
     search: String,
@@ -43,12 +52,13 @@ impl Desktop {
             fonts.families.entry(egui::FontFamily::Monospace).or_default().push("chinese".into());
         }
         cc.egui_ctx.set_fonts(fonts);
-        cc.egui_ctx.set_visuals(egui::Visuals::dark());
-        let mut style = (*cc.egui_ctx.style()).clone();
+        ui::theme(&cc.egui_ctx);
+        let mut style = (*cc.egui_ctx.style_of(egui::Theme::Light)).clone();
         style.spacing.item_spacing = egui::vec2(10.0, 8.0);
-        style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(16.0));
-        style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(16.0));
-        cc.egui_ctx.set_style(style);
+        style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(15.0));
+        style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(15.0));
+        style.spacing.button_padding = egui::vec2(14.0, 7.0);
+        cc.egui_ctx.set_style_of(egui::Theme::Light, style);
         Self {
             revision: update::revision(&layout), worker: Worker::new(layout), online: false,
             updating: false, confirm_update: false, message: "正在初始化任务运行环境…".into(),
@@ -56,7 +66,9 @@ impl Desktop {
             deleting: false,
             error: None,
             configs: vec![], selected: String::new(), task: "Script".into(), menu: Value::Null,
-            translations: Value::Null, groups: Value::Null, edits: HashMap::new(),
+            translations: Value::Null, groups: Value::Null, editor: editor::Editor::default(),
+            pending_action: None, parameter_search: String::new(), show_help: true, show_logs: false, errors_only: false, follow_logs: true,
+            icon: cc.egui_ctx.load_texture("app", egui::ColorImage::from_rgba_unmultiplied([128, 128], include_bytes!("../assets/app-icon.rgba")), egui::TextureOptions::LINEAR),
             states: HashMap::new(), logs: VecDeque::new(), search: String::new(), show_all_logs: false,
         }
     }
@@ -77,6 +89,7 @@ impl Desktop {
             let Ok(event) = self.worker.events.try_recv() else { break; };
             match event["event"].as_str().unwrap_or("") {
                 "ready" => {
+                    self.pending_action = None;
                     let completing_update = self.updating;
                     self.online = true;
                     self.updating = false;
@@ -91,8 +104,8 @@ impl Desktop {
                         self.states.insert(event["config"].as_str().unwrap_or("").into(), state);
                     }
                 }
-                "fatal" => { self.online = false; self.updating = false; self.deleting = false; self.states.clear(); self.error = Some(event["error"].as_str().unwrap_or("运行环境退出").into()); }
-                "error" => { self.updating = false; self.error = Some(event["error"].as_str().unwrap_or("操作失败").into()); }
+                "fatal" => { self.online = false; self.updating = false; self.deleting = false; self.pending_action = None; self.editor.cancel(); self.states.clear(); self.error = Some(event["error"].as_str().unwrap_or("运行环境退出").into()); }
+                "error" => { self.pending_action = None; self.editor.cancel(); self.updating = false; self.error = Some(event["error"].as_str().unwrap_or("操作失败").into()); }
                 "updated" => {
                     self.states.clear();
                     self.restart_required |= event["data"]["restart_required"] == true;
@@ -101,6 +114,21 @@ impl Desktop {
                     self.log(String::new(), format!("更新完成：{}", event["data"]));
                 }
                 "response" => {
+                    if self.editor.acknowledge(event["id"].as_str(), event["ok"] == true) {
+                        if event["ok"] == true {
+                            let data = &event["data"];
+                            if data["config"] == self.selected && data["task"] == self.task { self.groups = data["groups"].clone(); }
+                            self.message = format!("已保存 {} 项修改", self.editor.saved);
+                            self.send_next_save();
+                            if !self.editor.busy() { self.groups = Value::Null; self.schema(); }
+                        } else {
+                            self.message = format!("已保存 {} 项，其余修改仍保留", self.editor.saved);
+                            self.error = Some(event["error"].as_str().unwrap_or("保存失败，请检查输入").into());
+                            self.groups = Value::Null; self.schema();
+                        }
+                        continue;
+                    }
+                    if self.pending_action.as_deref() == event["command"].as_str() { self.pending_action = None; }
                     if event["ok"] != true {
                         if event["command"] == "delete" { self.deleting = false; }
                         self.error = Some(event["error"].as_str().unwrap_or("操作失败").into());
@@ -109,11 +137,11 @@ impl Desktop {
                     let data = &event["data"];
                     match event["command"].as_str().unwrap_or("") {
                         "hello" | "create" | "delete" => {
+                            self.groups = Value::Null;
                             if event["command"] == "delete" {
                                 self.deleting = false;
-                                if let Some(name) = data["deleted"].as_str() { self.states.remove(name); }
+                                if let Some(name) = data["deleted"].as_str() { self.states.remove(name); self.editor.discard(name); }
                                 self.groups = Value::Null;
-                                self.edits.clear();
                                 self.log(String::new(), format!("已删除配置 {}", data["deleted"]));
                             }
                             self.configs = data["configs"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
@@ -125,12 +153,10 @@ impl Desktop {
                         "schema" | "set" => {
                             if data["config"] == self.selected && data["task"] == self.task {
                                 self.groups = data["groups"].clone();
-                                self.edits.clear();
-                                self.message = if event["command"] == "set" { "配置已保存" } else { "就绪" }.into();
                             }
                         }
-                        "start" => self.message = "任务启动请求已执行，请查看日志".into(),
-                        "stop" => self.message = "任务已停止".into(),
+                        "start" => { self.message = "配置已启动，运行情况见日志".into(); self.show_logs = true; },
+                        "stop" => self.message = "配置已停止".into(),
                         _ => {}
                     }
                 }
@@ -138,184 +164,9 @@ impl Desktop {
             }
         }
     }
-    fn fields(&mut self, ui: &mut egui::Ui) {
-        let groups = self.groups.as_object().cloned().unwrap_or_default();
-        for (group, fields) in groups {
-            egui::CollapsingHeader::new(self.label(&group)).id_salt((&self.selected, &self.task, &group))
-                .default_open(true).show(ui, |ui| {
-                for field in fields.as_array().into_iter().flatten() {
-                    let key = field["name"].as_str().unwrap_or("");
-                    let note = help::description(&self.translations, key, field["description"].as_str());
-                    let id = format!("{group}/{key}");
-                    let mut value = self.edits.get(&id).unwrap_or(&field["value"]).clone();
-                    ui.push_id(&id, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            let title = self.label(key);
-                            ui.label(title).on_hover_text(&note);
-                            if let Some(options) = field["enumEnum"].as_array() {
-                                let current = value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string());
-                                egui::ComboBox::from_id_salt("value").selected_text(self.label(&current)).show_ui(ui, |ui| {
-                                    for option in options {
-                                        let label = option.as_str().map(str::to_string).unwrap_or_else(|| option.to_string());
-                                        ui.selectable_value(&mut value, option.clone(), self.label(&label));
-                                    }
-                                });
-                            } else if let Some(mut checked) = value.as_bool() {
-                                ui.checkbox(&mut checked, "");
-                                value = Value::Bool(checked);
-                            } else {
-                                let mut text = value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string());
-                                if ui.add(egui::TextEdit::singleline(&mut text).desired_width(320.0)).changed() {
-                                    value = Value::String(text);
-                                }
-                            }
-                            if value != field["value"] && ui.button("保存").clicked() {
-                                let mut parsed = value.clone();
-                                let kind = field["type"].as_str().unwrap_or("");
-                                if kind == "integer" || kind == "number" {
-                                    match serde_json::from_str::<Value>(value.as_str().unwrap_or("")) {
-                                        Ok(number) if number.is_number() && (kind != "integer" || number.is_i64() || number.is_u64()) => parsed = number,
-                                        _ => { self.message = "请输入有效的数字".into(); return; }
-                                    }
-                                }
-                                self.worker.request(json!({"command":"set","config":self.selected,"task":self.task,"group":group,"argument":key,"value":parsed}));
-                            }
-                        });
-                        if !note.is_empty() {
-                            ui.add(egui::Label::new(egui::RichText::new(&note).size(14.0)
-                                .color(ui.visuals().weak_text_color())).wrap());
-                            ui.add_space(6.0);
-                        }
-                    });
-                    if value != field["value"] { self.edits.insert(id, value); }
-                    else { self.edits.remove(&id); }
-                }
-            });
-            ui.separator();
-        }
-    }
+
 }
 
-impl eframe::App for Desktop {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.receive();
-        ctx.request_repaint_after(Duration::from_millis(100));
-        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("肝肝鼠");
-                ui.label("统一桌面 · Rust");
-                ui.separator();
-                ui.colored_label(if self.online { egui::Color32::LIGHT_GREEN } else { egui::Color32::YELLOW }, if self.online { "运行环境已连接" } else { "运行环境未连接" });
-                ui.label(format!("版本 {}", self.revision));
-                if ui.add_enabled(!self.updating, egui::Button::new("更新")).clicked() { self.confirm_update = true; }
-                if ui.add_enabled(!self.updating, egui::Button::new("重连运行环境")).clicked() {
-                    self.online = false; self.states.clear(); let _ = self.worker.tx.send(Work::Restart);
-                }
-            });
-        });
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            if let Some(error) = self.error.clone() {
-                ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
-                    if ui.small_button("关闭提示").clicked() { self.error = None; }
-                });
-            }
-            ui.label(&self.message);
-        });
-        egui::SidePanel::left("navigation").default_width(230.0).show(ctx, |ui| {
-            ui.heading("配置与任务");
-            let old = self.selected.clone();
-            egui::ComboBox::from_id_salt("config").selected_text(&self.selected).width(180.0).show_ui(ui, |ui| {
-                for name in &self.configs { ui.selectable_value(&mut self.selected, name.clone(), name); }
-            });
-            ui.horizontal(|ui| {
-                if ui.add_enabled(self.online && !self.deleting, egui::Button::new("新增配置")).clicked() {
-                    self.worker.request(json!({"command":"create"}));
-                }
-                if ui.add_enabled(self.online && !self.updating && !self.deleting && !self.selected.is_empty(),
-                    egui::Button::new("删除配置")).clicked() {
-                    self.deleting = true;
-                    self.worker.request(json!({"command":"delete","config":self.selected}));
-                }
-            });
-            if old != self.selected { self.groups = Value::Null; self.edits.clear(); self.schema(); }
-            let running = self.states.get(&self.selected).copied().unwrap_or(0) != 0;
-            ui.horizontal(|ui| {
-                if ui.add_enabled(self.online && !running && !self.selected.is_empty(), egui::Button::new("启动任务")).clicked() {
-                    self.worker.request(json!({"command":"start","config":self.selected}));
-                }
-                if ui.add_enabled(self.online && running, egui::Button::new("停止任务")).clicked() {
-                    self.worker.request(json!({"command":"stop","config":self.selected}));
-                }
-            });
-            ui.label(if running { "状态：运行中" } else { "状态：已停止" });
-            ui.separator();
-            ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("搜索任务"));
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                let menu = self.menu.as_object().cloned().unwrap_or_default();
-                for (category, tasks) in menu {
-                    let tasks: Vec<String> = tasks.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
-                    if tasks.is_empty() { continue; }
-                    egui::CollapsingHeader::new(self.label(&category)).default_open(true).show(ui, |ui| {
-                        for task in tasks {
-                            let label = self.label(&task);
-                            if !self.search.is_empty() && !label.to_lowercase().contains(&self.search.to_lowercase()) && !task.to_lowercase().contains(&self.search.to_lowercase()) { continue; }
-                            if ui.selectable_label(self.task == task, label).clicked() {
-                                self.task = task; self.groups = Value::Null; self.edits.clear(); self.schema();
-                            }
-                        }
-                    });
-                }
-            });
-        });
-        egui::TopBottomPanel::bottom("logs").resizable(true).default_height(190.0).show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.strong("运行日志");
-                ui.checkbox(&mut self.show_all_logs, "所有配置");
-                if ui.button("清空显示").clicked() { self.logs.clear(); }
-            });
-            egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
-                for (config, text) in &self.logs {
-                    if self.show_all_logs || config.is_empty() || config == &self.selected {
-                        ui.label(egui::RichText::new(if config.is_empty() { text.clone() } else { format!("[{config}] {text}") }).monospace().size(13.0));
-                    }
-                }
-            });
-        });
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if self.selected.is_empty() {
-                ui.heading("暂无配置");
-                ui.label("点击左侧“新增配置”开始设置任务。");
-                return;
-            }
-            ui.heading(self.label(&self.task));
-            let task_note = help::description(&self.translations, &self.task, None);
-            if !task_note.is_empty() {
-                ui.add(egui::Label::new(egui::RichText::new(task_note).color(ui.visuals().weak_text_color())).wrap());
-            }
-            ui.label("修改后点击对应字段的“保存”，任务规则与校验跟随上游版本。");
-            ui.separator();
-            ui.add_enabled_ui(self.online && !self.updating, |ui| {
-                egui::ScrollArea::vertical().id_salt("settings").show(ui, |ui| { self.fields(ui); });
-            });
-        });
-        if self.confirm_update {
-            egui::Window::new("更新").collapsible(false).resizable(false).show(ctx, |ui| {
-                ui.label("更新来源：HaJi-Lan/gangan-mouse · main");
-                ui.label("更新前会停止本程序管理的任务；完成后请重新打开软件。");
-                ui.label("配置和日志保留。存在本地修改或 Python 依赖变化时会取消更新。");
-                ui.horizontal(|ui| {
-                    if ui.button("停止任务并更新").clicked() {
-                        self.confirm_update = false; self.updating = true; self.online = false;
-                        self.states.clear(); self.message = "正在更新并构建肝肝鼠…".into();
-                        let _ = self.worker.tx.send(Work::Sync);
-                    }
-                    if ui.button("取消").clicked() { self.confirm_update = false; }
-                });
-            });
-        }
-    }
-}
 
 fn check(layout: Layout) -> Result<(), String> {
     let worker = Worker::new(layout);
