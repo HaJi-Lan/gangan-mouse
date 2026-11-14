@@ -2,7 +2,15 @@
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $OutputEncoding = [Console]::OutputEncoding
-$projectRoot = Split-Path $PSScriptRoot -Parent
+# Rust canonical paths use verbatim prefixes, which Windows PowerShell 5.1
+# cannot pass through its provider-based Join-Path / Split-Path operations.
+$taskScriptRoot = $PSScriptRoot
+if ($taskScriptRoot.StartsWith('\\?\UNC\')) {
+    $taskScriptRoot = '\\' + $taskScriptRoot.Substring(8)
+} elseif ($taskScriptRoot.StartsWith('\\?\')) {
+    $taskScriptRoot = $taskScriptRoot.Substring(4)
+}
+$projectRoot = Split-Path $taskScriptRoot -Parent
 Push-Location $projectRoot
 $taskTranscriptStarted = $false
 try {

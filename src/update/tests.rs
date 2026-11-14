@@ -202,3 +202,19 @@ fn failed_native_build_keeps_executable_and_records_full_diagnostics() {
     assert!(log.contains("17"));
     assert_eq!(fs::read(f.layout.root.join("GanganMouse.exe")).unwrap(), b"installed executable");
 }
+
+#[cfg(windows)]
+#[test]
+fn windows_powershell_build_bootstrap_accepts_canonical_verbatim_paths() {
+    let mut f = Fixture::new();
+    fs::create_dir_all(f.layout.root.join("scripts")).unwrap();
+    let bootstrap = include_str!("../../scripts/build.ps1").split("Push-Location $projectRoot").next().unwrap();
+    fs::write(f.layout.root.join("scripts/build.ps1"), format!(
+        "{bootstrap}\nWrite-Output (Join-Path $projectRoot 'runtime')\n")).unwrap();
+    f.layout.root = f.layout.root.canonicalize().unwrap();
+    assert!(f.layout.root.to_string_lossy().starts_with(r"\\?\"));
+    build(&f.layout).unwrap();
+    let log = fs::read_to_string(f.layout.root.join("runtime/update-build.log")).unwrap();
+    assert!(log.contains("runtime"));
+    assert!(!log.contains("Join-Path :"));
+}
