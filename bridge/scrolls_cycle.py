@@ -94,37 +94,29 @@ def ticket_count(result):
     return current
 
 
-def retry_exploration_counter(task, rule, sleep, log):
-    """Recover an icon read as a leading digit, without altering OCR numbers."""
+def read_exploration_counter(task, rule, log):
+    """Read one expanded chapter-entrance region, once per attempt."""
     import cv2
-    last, confirmed = None, 0
-    for _ in range(3):
-        sleep(0.3)
-        task.screenshot()
-        roi = rule.roi
-        # Expand outward only. Trimming the left edge can turn 30/30 into
-        # 0/30 with high confidence. Require agreement between expanded ROIs.
-        values = []
-        for pad_x, pad_y in ((4, 6), (8, 8)):
-            x, y, width, height = roi
-            left, top = max(0, x - pad_x), max(0, y - pad_y)
-            image = rule.pre_process(rule.crop(task.device.image,
-                (left, top, x + width + pad_x - left, y + height + pad_y - top)))
-            image = cv2.cvtColor(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
-            text, score = rule.model.ocr_single_line(image)
-            log(f'绘卷突破券复核：扩边=({pad_x},{pad_y}), 原文={text!r}, 置信度={score:.2f}')
-            match = re.fullmatch(r'\s*(0|[1-9][0-9]?)\s*/\s*30\s*', text)
-            if score >= max(rule.score, 0.8) and match and int(match[1]) <= 30:
-                values.append(int(match[1]))
-        value = values[0] if len(values) == 2 and values[0] == values[1] else None
-        if value is None:
-            last, confirmed = None, 0
-            continue
-        confirmed = confirmed + 1 if value == last else 1
-        last = value
-        if confirmed >= 2:
-            log(f'绘卷突破券重新确认：{value}/30')
-            return value
+    x, y, width, height = rule.roi
+    # Keep the icon out of the text line, extend right/bottom so all digits
+    # fit. Original 78x30 becomes 78x34 at the chapter's text baseline.
+    left, top = max(0, x + 6), max(0, y + 2)
+    image = rule.pre_process(rule.crop(task.device.image,
+        (left, top, width, height + 4)))
+    image = cv2.cvtColor(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+    text, score = rule.model.ocr_single_line(image)
+    match = re.fullmatch(r'\s*(0|[1-9][0-9]?)\s*/\s*30\s*', text)
+    if score >= max(rule.score, 0.8) and match and int(match[1]) <= 30:
+        count = int(match[1])
+        log(f'章节入口突破券：{count}/30')
+        return count
+    log(f'章节入口突破券无法识别：原文={text!r}, 置信度={score:.2f}')
+    try:
+        from diagnostics import save_counter_failure
+        path = save_counter_failure(task, rule, image, text, score, (left, top, width, height + 4))
+        log(f'突破券识别失败画面与素材对比已保存：{path}')
+    except Exception as error:
+        log(f'保存识别失败画面失败：{type(error).__name__}')
     return None
 
 
@@ -213,13 +205,16 @@ class ScrollsCycle:
             save_counter_frame(task, rule)
         except Exception as error:
             self.log(f'保存识别裁片失败：{type(error).__name__}')
-        # Even a plausible 11/30 can be a misread. Verify every entrance
-        # against expanded regions and fresh frames before comparing limits.
-        count = retry_exploration_counter(task, rule, self.sleep, self.log)
+        count = read_exploration_counter(task, rule, self.log)
         if count is None:
             self.log('章节入口仍无法确认突破券，5 秒后重试，暂不进入探索')
-            self.pause(5)
-            raise TaskEnd
+            while count is None:
+                if not self.pause(5):
+                    raise TaskEnd
+                task.screenshot()
+                if not (task.appear(task.I_E_EXPLORATION_CLICK) and task.appear(task.I_EXP_CREATE_TEAM)):
+                    return
+                count = read_exploration_counter(task, rule, self.log)
         if count == 0 or count < settings.scrolls_threshold:
             return
         for target in (task.I_RED_CLOSE, task.I_UI_CANCEL, task.I_UI_CANCEL_SAMLL):

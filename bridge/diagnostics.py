@@ -6,6 +6,8 @@ import re
 import subprocess
 import zipfile
 import uuid
+import math
+import shutil
 
 
 def save_counter_frame(task, rule):
@@ -23,6 +25,44 @@ def save_counter_frame(task, rule):
     cv2.imwrite(str(directory / filename), image)
     for path in sorted(directory.glob('*.png'), key=lambda p: p.stat().st_mtime, reverse=True)[20:]:
         path.unlink(missing_ok=True)
+
+
+def save_counter_failure(task, rule, crop, text, score, roi):
+    import cv2
+    config = str(getattr(task.config, 'config_name', 'unknown'))
+    if not re.fullmatch(r'[A-Za-z0-9_-]+', config):
+        config = 'unknown'
+    root = Path('log/ocr-failures') / config
+    directory = root / datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+    directory.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(directory / 'screen.png'), task.device.image)
+    cv2.imwrite(str(directory / 'counter.png'), crop)
+    comparisons = []
+    # Compare entrance UI templates to the exact failed frame. Numeric OCR
+    # uses an ONNX model, not digit PNG templates; report its raw prediction.
+    for key in ('I_E_EXPLORATION_CLICK', 'I_EXP_CREATE_TEAM'):
+        item = getattr(task, key)
+        comparison = {'rule': key, 'template': item.file, 'threshold': item.threshold}
+        try:
+            match = item.match(task.device.image)
+            comparison.update(matched=bool(match), score=float(item.last_score))
+            source = Path(item.file)
+            if source.is_file():
+                shutil.copyfile(source, directory / (key + source.suffix))
+        except Exception as error:
+            comparison['error'] = type(error).__name__
+        comparisons.append(comparison)
+    report = {'time': datetime.now().isoformat(), 'roi': roi, 'raw_text': text,
+              'confidence': float(score) if math.isfinite(float(score)) else None,
+              'ocr': 'ppocronnx TextSystem', 'counter_rule': str(rule),
+              'template_comparisons': comparisons}
+    (directory / 'comparison.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+    for old in sorted(root.iterdir(), key=lambda p: p.name, reverse=True)[10:]:
+        if (old.is_dir() and not old.is_symlink()
+                and not old.lstat().st_file_attributes & 0x400
+                and old.resolve().is_relative_to(root.resolve())):
+            shutil.rmtree(old)
+    return str(directory.resolve())
 
 
 def export_logs(runtime, app_root, name):
@@ -60,6 +100,16 @@ def export_logs(runtime, app_root, name):
             for path in images:
                 if not path.is_symlink() and path.resolve().is_relative_to(runtime) and path.stat().st_size <= 1024 * 1024:
                     bundle.writestr('ocr/' + path.name, path.read_bytes())
+            failures = runtime / 'log/ocr-failures' / name
+            for directory in sorted(failures.glob('*'), reverse=True)[:10]:
+                if not directory.is_dir() or directory.is_symlink():
+                    continue
+                for path in directory.iterdir():
+                    if (path.name in ('screen.png', 'counter.png', 'comparison.json',
+                                      'I_E_EXPLORATION_CLICK.png', 'I_EXP_CREATE_TEAM.png')
+                            and not path.is_symlink() and path.resolve().is_relative_to(runtime)
+                            and path.stat().st_size <= 5 * 1024 * 1024):
+                        bundle.writestr('failures/' + directory.name + '/' + path.name, path.read_bytes())
             bundle.writestr('异常与识别摘要.txt', '\n'.join(snippets[-300:]))
         return {'path': str(target), 'config': name}
     except Exception:

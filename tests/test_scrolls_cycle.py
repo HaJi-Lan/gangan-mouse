@@ -108,26 +108,24 @@ class ScrollsCycleTests(unittest.TestCase):
         with game_dependencies(), self.assertRaises(TaskEnd):
             self.cycle.exploration_check(task, self.settings, Mock())
         self.assertEqual(self.cycle.requested, 'RealmRaid')
-        self.assertGreaterEqual(task.screenshot.call_count, 2)
+        task.screenshot.assert_not_called()
+        self.assertEqual(rule.model.ocr_single_line.call_count, 1)
 
-    def test_unreadable_entrance_does_not_enter_chapter(self):
-        import numpy as np
-        task = self.exploration_task(30, entrance=True)
-        task.O_REALM_RAID_NUMBER1.ocr.return_value = (130, -100, 30)
+    def test_unreadable_entrance_waits_five_seconds_then_accepts_ten(self):
+        task = self.exploration_task(10, entrance=True)
         rule = task.O_REALM_RAID_NUMBER1
-        rule.roi = (920, 12, 78, 30)
-        rule.score = .6
-        rule.model.ocr_single_line.return_value = ('130/30', .99)
-        rule.crop.return_value = np.zeros((42, 86, 3), dtype=np.uint8)
-        rule.pre_process.side_effect = lambda image: image
-        task.device.image = np.zeros((720, 1280, 3), dtype=np.uint8)
-        with game_dependencies(), self.assertRaises(TaskEnd):
+        rule.model.ocr_single_line.side_effect = [('', .99), ('10/30', .93)]
+        with game_dependencies():
             self.cycle.exploration_check(task, self.settings, Mock())
+        self.assertEqual(self.sleep.call_count, 5)
+        self.sleep.assert_called_with(1)
+        task.screenshot.assert_called_once()
+        self.assertEqual(rule.model.ocr_single_line.call_count, 2)
         self.assertIsNone(self.cycle.requested)
 
     def test_recovery_does_not_clamp_invalid_or_low_confidence_counts(self):
         import numpy as np
-        from scrolls_cycle import retry_exploration_counter
+        from scrolls_cycle import read_exploration_counter
         task = Mock()
         rule = Mock(roi=(920, 12, 78, 30), score=.6)
         rule.crop.return_value = np.zeros((42, 86, 3), dtype=np.uint8)
@@ -135,17 +133,17 @@ class ScrollsCycleTests(unittest.TestCase):
         for text, score in [('130/30', .99), ('30/3', .99), ('30/30', .3), ('', .99)]:
             with self.subTest(text=text, score=score):
                 rule.model.ocr_single_line.return_value = (text, score)
-                self.assertIsNone(retry_exploration_counter(task, rule, self.sleep, self.log))
+                self.assertIsNone(read_exploration_counter(task, rule, self.log))
 
     def test_crop_recovery_preserves_counts_below_threshold(self):
         import numpy as np
-        from scrolls_cycle import retry_exploration_counter
+        from scrolls_cycle import read_exploration_counter
         task = Mock()
         rule = Mock(roi=(920, 12, 78, 30), score=.6)
         rule.crop.return_value = np.zeros((42, 86, 3), dtype=np.uint8)
         rule.pre_process.side_effect = lambda image: image
         rule.model.ocr_single_line.side_effect = [('24/30', .99)] * 4
-        self.assertEqual(retry_exploration_counter(task, rule, self.sleep, self.log), 24)
+        self.assertEqual(read_exploration_counter(task, rule, self.log), 24)
 
     def test_wrong_counter_total_is_not_a_raid_ticket(self):
         self.assertIsNone(ticket_count((3, 0, 3)))
@@ -167,31 +165,34 @@ class ScrollsCycleTests(unittest.TestCase):
         task.goto_page.assert_not_called()
         task.O_REALM_RAID_NUMBER1.ocr.assert_not_called()
 
-    def test_conflicting_expanded_counts_are_not_confirmed_as_zero(self):
-        from scrolls_cycle import retry_exploration_counter
-        task = self.exploration_task(30, entrance=True)
+    def test_valid_ten_reads_once_without_waiting_or_rechecking(self):
+        task = self.exploration_task(10, entrance=True)
         rule = task.O_REALM_RAID_NUMBER1
-        rule.model.ocr_single_line.side_effect = [('0/30', .99), ('30/30', .99)] * 3
-        self.assertIsNone(retry_exploration_counter(task, rule, self.sleep, self.log))
+        rule.model.ocr_single_line.side_effect = [('10/30', .93), ('0/30', .91)]
+        with game_dependencies():
+            self.cycle.exploration_check(task, self.settings, Mock())
+        rule.model.ocr_single_line.assert_called_once()
+        self.sleep.assert_not_called()
+        self.assertIsNone(self.cycle.requested)
 
     def test_real_full_ticket_image_never_becomes_zero(self):
         import cv2
         import numpy as np
         from module.atom.ocr import RuleOcr
         from module.ocr.ppocr import TextSystem
-        from scrolls_cycle import retry_exploration_counter
+        from scrolls_cycle import read_exploration_counter
         image = np.zeros((720, 1280, 3), dtype=np.uint8)
         rule = RuleOcr(name='REALM_RAID_NUMBER1', mode='DigitCounter', method='Default',
                        roi=(920, 12, 78, 30), area=(920, 12, 78, 30), keyword='')
         rule.model = TextSystem()
-        for file, expected in [('full-tickets.png', 30), ('eight-tickets.png', 8)]:
+        for file, expected in [('full-tickets.png', 30), ('eight-tickets.png', 8), ('ten-tickets.png', 10)]:
             counter = cv2.imread(str(Path(__file__).parent / 'fixtures/scrolls' / file))
             for shift in (-2, -1, 0, 1, 2):
                 with self.subTest(file=file, pixel_shift=shift):
                     image[:] = 0
                     image[:60, 900 + shift:1020 + shift] = counter
                     task = Mock(device=SimpleNamespace(image=image))
-                    self.assertEqual(retry_exploration_counter(task, rule, self.sleep, self.log), expected)
+                    self.assertEqual(read_exploration_counter(task, rule, self.log), expected)
 
     def test_raid_confirms_empty_and_does_not_return_on_unreadable_frame(self):
         with game_dependencies():
