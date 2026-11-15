@@ -82,6 +82,10 @@ class Runtime:
             self.check_task(request['task'])
             config = self.config(name)
             return dict(config=name, task=request['task'], groups=task_schema(config, request['task']))
+        if command == 'export_logs':
+            self.check_name(name)
+            from diagnostics import export_logs
+            return export_logs(self.root, Path(__file__).resolve().parents[1], name)
         if command == 'set':
             self.check_task(request['task'])
             config = self.config(name)

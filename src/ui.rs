@@ -224,6 +224,17 @@ impl Desktop {
                 ui.checkbox(&mut self.show_all_logs, "所有配置"); ui.checkbox(&mut self.errors_only, "只看异常"); ui.checkbox(&mut self.follow_logs, "跟随最新");
                 if ui.small_button("复制").clicked() { ctx.copy_text(self.visible_logs().into_iter().map(|(line, _)| line).collect::<Vec<_>>().join("\n")); self.message = "日志已复制".into(); }
                 if ui.small_button("清空显示").clicked() { self.logs.clear(); }
+                if ui.add_enabled(self.online && self.pending_action.is_none() && !self.selected.is_empty(), egui::Button::new("导出诊断日志").small()).clicked() {
+                    self.pending_action = Some("export_logs".into());
+                    self.worker.request(json!({"command":"export_logs","config":self.selected}));
+                    self.message = "正在提取近期日志与识别裁片…".into();
+                }
+                if ui.small_button("打开日志目录").clicked() {
+                    let directory = self.update_root.join("runtime/diagnostics");
+                    if let Err(error) = std::fs::create_dir_all(&directory).and_then(|_| std::process::Command::new("explorer.exe").arg(&directory).spawn().map(|_| ())) {
+                        self.error = Some(format!("无法打开日志目录：{error}"));
+                    }
+                }
             }
         });
         if self.show_logs {

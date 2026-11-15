@@ -174,6 +174,11 @@ impl Desktop {
                         }
                         "start" => { self.message = "配置已启动，运行情况见日志".into(); self.show_logs = true; },
                         "stop" => self.message = "配置已停止".into(),
+                        "export_logs" => {
+                            let path = data["path"].as_str().unwrap_or("");
+                            self.message = format!("诊断日志已导出：{path}");
+                            self.log(self.selected.clone(), format!("诊断日志已导出：{path}"));
+                        }
                         _ => {}
                     }
                 }

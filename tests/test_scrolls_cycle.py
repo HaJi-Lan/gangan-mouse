@@ -103,7 +103,7 @@ class ScrollsCycleTests(unittest.TestCase):
         rule.model = Mock()
         # First pass reproduces 130/30 from the log; cropped fresh frames
         # must yield a valid 30/30 instead of clamping 130 to 30.
-        rule.model.ocr_single_line.side_effect = [('130/30', .99)] + [('30/30', .99)] * 4
+        rule.model.ocr_single_line.side_effect = [('30/30', .99)] * 4
         task.O_REALM_RAID_NUMBER1 = rule
         with game_dependencies(), self.assertRaises(TaskEnd):
             self.cycle.exploration_check(task, self.settings, Mock())
@@ -157,6 +157,16 @@ class ScrollsCycleTests(unittest.TestCase):
             self.cycle.exploration_check(task, self.settings, Mock())
         self.assertEqual(self.cycle.requested, 'RealmRaid')
 
+    def test_plausible_eleven_cannot_override_confirmed_eight(self):
+        task = self.exploration_task(8, entrance=True)
+        task.O_REALM_RAID_NUMBER1.ocr.return_value = (11, 19, 30)
+        self.settings.scrolls_threshold = 10
+        with game_dependencies():
+            self.cycle.exploration_check(task, self.settings, Mock())
+        self.assertIsNone(self.cycle.requested)
+        task.goto_page.assert_not_called()
+        task.O_REALM_RAID_NUMBER1.ocr.assert_not_called()
+
     def test_conflicting_expanded_counts_are_not_confirmed_as_zero(self):
         from scrolls_cycle import retry_exploration_counter
         task = self.exploration_task(30, entrance=True)
@@ -171,16 +181,17 @@ class ScrollsCycleTests(unittest.TestCase):
         from module.ocr.ppocr import TextSystem
         from scrolls_cycle import retry_exploration_counter
         image = np.zeros((720, 1280, 3), dtype=np.uint8)
-        counter = cv2.imread(str(Path(__file__).parent / 'fixtures/scrolls/full-tickets.png'))
         rule = RuleOcr(name='REALM_RAID_NUMBER1', mode='DigitCounter', method='Default',
                        roi=(920, 12, 78, 30), area=(920, 12, 78, 30), keyword='')
         rule.model = TextSystem()
-        for shift in (-2, -1, 0, 1, 2):
-            with self.subTest(pixel_shift=shift):
-                image[:] = 0
-                image[:60, 900 + shift:1020 + shift] = counter
-                task = Mock(device=SimpleNamespace(image=image))
-                self.assertEqual(retry_exploration_counter(task, rule, self.sleep, self.log), 30)
+        for file, expected in [('full-tickets.png', 30), ('eight-tickets.png', 8)]:
+            counter = cv2.imread(str(Path(__file__).parent / 'fixtures/scrolls' / file))
+            for shift in (-2, -1, 0, 1, 2):
+                with self.subTest(file=file, pixel_shift=shift):
+                    image[:] = 0
+                    image[:60, 900 + shift:1020 + shift] = counter
+                    task = Mock(device=SimpleNamespace(image=image))
+                    self.assertEqual(retry_exploration_counter(task, rule, self.sleep, self.log), expected)
 
     def test_raid_confirms_empty_and_does_not_return_on_unreadable_frame(self):
         with game_dependencies():

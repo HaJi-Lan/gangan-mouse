@@ -114,7 +114,7 @@ def retry_exploration_counter(task, rule, sleep, log):
             text, score = rule.model.ocr_single_line(image)
             log(f'绘卷突破券复核：扩边=({pad_x},{pad_y}), 原文={text!r}, 置信度={score:.2f}')
             match = re.fullmatch(r'\s*(0|[1-9][0-9]?)\s*/\s*30\s*', text)
-            if score >= rule.score and match and int(match[1]) <= 30:
+            if score >= max(rule.score, 0.8) and match and int(match[1]) <= 30:
                 values.append(int(match[1]))
         value = values[0] if len(values) == 2 and values[0] == values[1] else None
         if value is None:
@@ -208,10 +208,14 @@ class ScrollsCycle:
         if not entrance:
             return
         rule = task.O_REALM_RAID_NUMBER1
-        count = ticket_count(rule.ocr(task.device.image))
-        if count is None or count == 0:
-            self.log('绘卷突破券读数无效，重新截图识别')
-            count = retry_exploration_counter(task, rule, self.sleep, self.log)
+        try:
+            from diagnostics import save_counter_frame
+            save_counter_frame(task, rule)
+        except Exception as error:
+            self.log(f'保存识别裁片失败：{type(error).__name__}')
+        # Even a plausible 11/30 can be a misread. Verify every entrance
+        # against expanded regions and fresh frames before comparing limits.
+        count = retry_exploration_counter(task, rule, self.sleep, self.log)
         if count is None:
             self.log('章节入口仍无法确认突破券，5 秒后重试，暂不进入探索')
             self.pause(5)
