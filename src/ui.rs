@@ -379,8 +379,8 @@ impl eframe::App for Desktop {
             if self.restart_required { ui.colored_label(ACCENT, "软件已更新，请关闭并重新打开以使用新版本。"); }
             section_heading(ui, "02", "参数");
             ui.add_space(4.0);
-            ui.label(RichText::new(self.label(&self.task)).size(16.0).strong());
             ui.horizontal(|ui| {
+                ui.label(RichText::new(self.label(&self.task)).size(16.0).strong());
                 if let Some(field) = self.groups["scheduler"].as_array().and_then(|fields| fields.iter().find(|f| f["name"] == "enable")).cloned() {
                     let key = self.key("scheduler", "enable");
                     let mut checked = self.editor.value(&key).unwrap_or(&field["value"]).as_bool().unwrap_or(false);
