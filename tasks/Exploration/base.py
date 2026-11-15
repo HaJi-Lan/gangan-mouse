@@ -343,10 +343,9 @@ class BaseExploration(GameUi, GeneralBattle, GeneralRoom, GeneralInvite, Replace
         # 判断是否开启突破票检测
         if not con_scrolls.scrolls_enable:
             return
-        if self.appear(self.I_E_EXPLORATION_CLICK) and self.appear(self.I_EXP_CREATE_TEAM):
-            cu, res, total = self.O_REALM_RAID_NUMBER1.ocr(self.device.image)
-        else:
-            cu, res, total = self.O_REALM_RAID_NUMBER.ocr(self.device.image)
+        if not (self.appear(self.I_E_EXPLORATION_CLICK) and self.appear(self.I_EXP_CREATE_TEAM)):
+            return
+        cu, res, total = self.O_REALM_RAID_NUMBER1.ocr(self.device.image)
         # 判断突破票数量
         if cu < con_scrolls.scrolls_threshold:
             return

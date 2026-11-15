@@ -7,8 +7,7 @@ import unittest
 from unittest.mock import Mock
 
 ROOT = Path(__file__).resolve().parents[1]
-UPSTREAM = next(path for path in (ROOT / 'runtime/upstream', ROOT / 'OAS', ROOT)
-                if (path / 'tasks/Exploration').is_dir())
+UPSTREAM = ROOT
 
 
 class TaskEnd(Exception):
@@ -34,7 +33,7 @@ class ExplorationScrollsTests(unittest.TestCase):
         runner.O_REALM_RAID_NUMBER1.ocr.return_value = (count, 30-count, 30)
         scrolls = SimpleNamespace(scrolls_enable=enabled, scrolls_threshold=threshold, scrolls_cd=timedelta(minutes=30))
         config = SimpleNamespace(buff_gold_50_click=False, buff_gold_100_click=False, buff_exp_50_click=False, buff_exp_100_click=False)
-        if should_challenge:
+        if should_challenge and entrance and enabled:
             with self.assertRaises(TaskEnd):
                 self.activate(runner, scrolls, config)
             calls = [call.kwargs['task'] for call in runner.set_next_run.call_args_list]
@@ -45,11 +44,13 @@ class ExplorationScrollsTests(unittest.TestCase):
             self.activate(runner, scrolls, config)
             runner.set_next_run.assert_not_called()
             runner.goto_page.assert_not_called()
-        if enabled:
-            selected = runner.O_REALM_RAID_NUMBER1 if entrance else runner.O_REALM_RAID_NUMBER
-            selected.ocr.assert_called_once_with(device.image)
+        runner.O_REALM_RAID_NUMBER.ocr.assert_not_called()
+        if enabled and entrance:
+            runner.O_REALM_RAID_NUMBER1.ocr.assert_called_once_with(device.image)
+        else:
+            runner.O_REALM_RAID_NUMBER1.ocr.assert_not_called()
 
-    def test_threshold_boundaries_in_both_exploration_screens(self):
+    def test_threshold_boundaries_only_at_chapter_entrance(self):
         for entrance in (False, True):
             for count, challenge in ((24, False), (25, True), (26, True)):
                 with self.subTest(entrance=entrance, count=count):

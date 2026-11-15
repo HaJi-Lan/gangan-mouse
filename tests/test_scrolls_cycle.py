@@ -59,7 +59,7 @@ class ScrollsCycleTests(unittest.TestCase):
             rule.model.ocr_single_line.return_value = (f'{count}/30', .99)
         return task
 
-    def test_exploration_threshold_equality_positive_ticket_and_both_ocr_positions(self):
+    def test_exploration_threshold_equality_only_at_chapter_entrance(self):
         con = SimpleNamespace(buff_gold_50_click=False, buff_gold_100_click=False,
                               buff_exp_50_click=False, buff_exp_100_click=False)
         with game_dependencies():
@@ -70,7 +70,7 @@ class ScrollsCycleTests(unittest.TestCase):
                         self.cycle.requested = None
                         self.settings.scrolls_threshold = threshold
                         task = self.exploration_task(count, entrance)
-                        if switch:
+                        if switch and entrance:
                             with self.assertRaises(TaskEnd):
                                 self.cycle.exploration_check(task, self.settings, con)
                             self.assertEqual(self.cycle.requested, 'RealmRaid')
@@ -80,6 +80,12 @@ class ScrollsCycleTests(unittest.TestCase):
                             task.goto_page.assert_not_called()
                             self.assertIsNone(self.cycle.requested)
                         task.set_next_run.assert_not_called()
+                        task.O_REALM_RAID_NUMBER.ocr.assert_not_called()
+                        if not entrance:
+                            task.O_REALM_RAID_NUMBER1.ocr.assert_not_called()
+                            task.screenshot.assert_not_called()
+                            self.log.assert_not_called()
+                        self.log.reset_mock()
 
     def test_disabled_mode_stops_automatic_switching(self):
         self.settings.scrolls_enable = False

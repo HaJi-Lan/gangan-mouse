@@ -205,19 +205,17 @@ class ScrollsCycle:
             raise TaskEnd
         settings = self.read_config().exploration.scrolls
         entrance = task.appear(task.I_E_EXPLORATION_CLICK) and task.appear(task.I_EXP_CREATE_TEAM)
-        rule = task.O_REALM_RAID_NUMBER1 if entrance else task.O_REALM_RAID_NUMBER
+        if not entrance:
+            return
+        rule = task.O_REALM_RAID_NUMBER1
         count = ticket_count(rule.ocr(task.device.image))
-        if count is None or (entrance and count == 0):
+        if count is None or count == 0:
             self.log('绘卷突破券读数无效，重新截图识别')
             count = retry_exploration_counter(task, rule, self.sleep, self.log)
         if count is None:
-            if entrance:
-                self.log('章节入口仍无法确认突破券，5 秒后重试，暂不进入探索')
-                self.pause(5)
-                raise TaskEnd
-            # The world map can hide this counter. Opening the chapter
-            # exposes its own counter; that entrance is guarded above.
-            return
+            self.log('章节入口仍无法确认突破券，5 秒后重试，暂不进入探索')
+            self.pause(5)
+            raise TaskEnd
         if count == 0 or count < settings.scrolls_threshold:
             return
         for target in (task.I_RED_CLOSE, task.I_UI_CANCEL, task.I_UI_CANCEL_SAMLL):
