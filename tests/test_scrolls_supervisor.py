@@ -89,6 +89,11 @@ with tempfile.TemporaryDirectory(prefix='oas-scrolls-supervisor-') as tmp:
                       if event['execution']['task'] in ('Exploration', 'RealmRaid')]
             assert [event['task'] for event in actual] == phases
             assert all(event['owner'] == 'MemoryScrolls' for event in actual)
+            assert all('scrolls_elapsed_seconds' in event for event in actual)
+            times = [event['scrolls_elapsed_seconds'] for event in actual]
+            assert times == sorted(times)
+            waits = [event['execution'] for event in events if event['execution']['owner'] == 'MemoryScrolls' and not event['execution']['task']]
+            assert waits and all('scrolls_elapsed_seconds' in event for event in waits)
             assert events[-1]['execution'] == {'task': '', 'owner': ''}
         # The owner must be delayed after a deadline, including the
         # supervisor's final running_task save, so it cannot restart at once.

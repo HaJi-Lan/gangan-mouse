@@ -68,7 +68,11 @@ def install_runtime_policy():
         def report_execution(self, task, owner=''):
             queue = getattr(self, 'state_queue', None)
             if queue is not None:
-                queue.put({'execution': {'task': task, 'owner': owner}})
+                execution = {'task': task, 'owner': owner}
+                cycle = getattr(self, '_desktop_scrolls_cycle', None)
+                if owner and cycle is not None and cycle.active and cycle.started_at is not None:
+                    execution['scrolls_elapsed_seconds'] = max(0, cycle.clock() - cycle.started_at)
+                queue.put({'execution': execution})
 
         def run(self, command):
             if convert_to_underscore(command) in removed:

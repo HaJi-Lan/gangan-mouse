@@ -9,7 +9,6 @@ from pathlib import Path
 COLLECTION_GROUPS = {
     'scrolls': ('Exploration', 'scrolls'),
     'exploration_config': ('Exploration', 'exploration_config'),
-    'invite_config': ('Exploration', 'invite_config'),
     'cycle_exploration_battle': ('Exploration', 'general_battle_config'),
     'cycle_exploration_soul': ('Exploration', 'switch_soul_config'),
     'raid_config': ('RealmRaid', 'raid_config'),

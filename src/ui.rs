@@ -112,10 +112,15 @@ impl Desktop {
                 if execution.owner != execution.task && !execution.owner.is_empty() {
                     ui.label(format!("所属任务：{}", self.label(&execution.owner)));
                 }
-                ui.label(RichText::new(format!("本次已执行 {}", execution.elapsed())).color(ACCENT));
+                if execution.scrolls_started.is_none() {
+                    ui.label(RichText::new(format!("本次已执行 {}", execution.elapsed())).color(ACCENT));
+                }
             } else if running {
                 ui.label(RichText::new(if execution.owner.is_empty() { "等待调度".into() } else { format!("{} · 阶段间等待", self.label(&execution.owner)) }).strong());
             } else { ui.label("暂无执行中的任务"); }
+            if running && execution.scrolls_started.is_some() {
+                ui.label(RichText::new(format!("绘卷总运行时间 {}", execution.elapsed())).color(ACCENT));
+            }
             ui.add_space(5.0); ui.separator();
             ui.label(RichText::new("接下来的任务").strong());
             let upcoming = execution.upcoming();
@@ -266,8 +271,6 @@ impl eframe::App for Desktop {
                     ui.menu_button("更多", |ui| {
                         ui.label(format!("版本 {}", self.revision)); ui.separator();
                         if self.editor.total() > 0 { ui.label("请先保存或撤销未保存的修改"); }
-                        if ui.add_enabled(!self.busy() && self.editor.total() == 0, egui::Button::new("更新软件"))
-                            .on_hover_text("有未保存的修改时，请先保存或撤销").clicked() { self.confirm_update = true; ui.close_menu(); }
                         if ui.add_enabled(!self.busy(), egui::Button::new("更新源设置")).clicked() {
                             match super::update::Source::load(&self.update_root) {
                                 Ok(source) => self.update_source = source,
@@ -280,6 +283,8 @@ impl eframe::App for Desktop {
                             self.message = "正在重新连接…".into(); let _ = self.worker.tx.send(Work::Restart); ui.close_menu();
                         }
                     });
+                    if ui.add_enabled(!self.busy() && self.editor.total() == 0, egui::Button::new("更新软件"))
+                        .on_hover_text("有未保存的修改时，请先保存或撤销").clicked() { self.confirm_update = true; }
                     if self.updating { ui.spinner(); ui.label("正在更新"); }
                     else { ui.colored_label(if self.online { Color32::from_rgb(27, 126, 80) } else { MUTED },
                         if self.online { "● 已连接" } else if self.error.is_some() { "○ 未连接" } else { "○ 正在连接" }); }

@@ -178,6 +178,9 @@ class Script:
         self.assertEqual(next(f['value'] for f in data['scrolls'] if f['name']=='scrolls_limit_minutes'), 120)
         self.assertFalse(self.request('set', config='oas1', task='Exploration', group='scrolls',
                                      argument='scrolls_limit_minutes', value=0)['ok'])
+        groups = self.request('schema', config='oas1', task='MemoryScrolls')['data']['groups']
+        self.assertNotIn('invite_config', groups)
+        self.assertIn('invite_config', self.request('schema', config='oas1', task='Exploration')['data']['groups'])
 
     def test_fresh_clone_has_chinese_notes_without_generated_upstream_json(self):
         generated = self.fixture / 'module/config/i18n/zh-CN.json'

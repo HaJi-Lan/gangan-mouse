@@ -1,11 +1,12 @@
 use serde_json::Value;
-use std::{collections::HashSet, time::Instant};
+use std::{collections::HashSet, time::{Duration, Instant}};
 
 #[derive(Clone, Default)]
 pub struct Execution {
     pub task: String,
     pub owner: String,
     pub started: Option<Instant>,
+    pub scrolls_started: Option<Instant>,
     schedule: Value,
 }
 
@@ -17,6 +18,9 @@ impl Execution {
             if task.is_empty() { self.started = None; }
             else if task != self.task || owner != self.owner || self.started.is_none() { self.started = Some(Instant::now()); }
             self.task = task.into(); self.owner = owner.into();
+            if let Some(seconds) = execution["scrolls_elapsed_seconds"].as_f64().filter(|v| v.is_finite() && *v >= 0.0 && *v < 1e9) {
+                self.scrolls_started = Instant::now().checked_sub(Duration::from_secs_f64(seconds));
+            } else { self.scrolls_started = None; }
         }
         if let Some(schedule) = data.get("schedule") { self.schedule = schedule.clone(); }
     }
@@ -41,7 +45,7 @@ impl Execution {
         tasks
     }
     pub fn elapsed(&self) -> String {
-        let seconds = self.started.map(|s| s.elapsed().as_secs()).unwrap_or(0);
+        let seconds = self.scrolls_started.or(self.started).map(|s| s.elapsed().as_secs()).unwrap_or(0);
         if seconds >= 3600 { format!("{:02}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60) }
         else { format!("{:02}:{:02}", seconds / 60, seconds % 60) }
     }
@@ -51,6 +55,20 @@ impl Execution {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn scroll_total_uses_backend_duration_across_phases_and_waits() {
+        let mut e = Execution::default();
+        for (task, seconds) in [("Exploration", 60.0), ("", 75.0), ("RealmRaid", 90.0)] {
+            e.apply(&json!({"execution":{"task":task,"owner":"MemoryScrolls","scrolls_elapsed_seconds":seconds}}));
+            assert!(e.scrolls_started.is_some());
+            assert!(e.scrolls_started.unwrap().elapsed().as_secs() >= seconds as u64);
+        }
+        assert_eq!(e.elapsed(), "01:30");
+        e.apply(&json!({"execution":{"task":"","owner":""}}));
+        assert!(e.scrolls_started.is_none());
+        e.apply(&json!({"execution":{"task":"Orochi","owner":"Orochi"}}));
+        assert!(e.started.is_some()); assert!(e.scrolls_started.is_none());
+    }
     #[test]
     fn scheduler_candidates_are_not_reported_as_running_tasks() {
         let mut e = Execution::default();
