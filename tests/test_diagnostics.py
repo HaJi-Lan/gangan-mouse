@@ -64,16 +64,13 @@ class DiagnosticsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 export_logs(runtime, root, '../oas1')
 
-    def test_clicks_wait_for_device_interval_before_dispatch(self):
+    def test_clicks_use_original_immediate_dispatch(self):
         method = Mock()
         device = NS(config=NS(script=NS(device=NS(control_method='minitouch'))),
                     click_methods={'minitouch': method}, click_adb=Mock(), handle_control_check=Mock())
-        with patch('module.device.control.monotonic', side_effect=[0, 0, .1, 1]), \
-             patch('module.device.control.uniform', return_value=1), \
-             patch('module.device.control.sleep') as sleep:
-            Control.click(device, 1, 2)
-            Control.click(device, 3, 4)
-            sleep.assert_called_once_with(.9)
+        Control.click(device, 1, 2)
+        Control.click(device, 3, 4)
+        self.assertFalse(hasattr(device, '_next_desktop_click'))
         self.assertEqual(method.call_count, 2)
 
 

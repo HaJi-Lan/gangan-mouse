@@ -10,8 +10,6 @@ from module.device.method.adb import Adb
 from module.device.method.scrcpy import Scrcpy
 from module.device.method.windows import Window
 from module.logger import logger
-from time import monotonic, sleep
-from random import uniform
 
 
 class Control(Minitouch, Adb, Scrcpy, Window):
@@ -71,9 +69,6 @@ class Control(Minitouch, Adb, Scrcpy, Window):
         :param control_check:
         :return:
         """
-        wait = getattr(self, '_next_desktop_click', 0) - monotonic()
-        if wait > 0:
-            sleep(wait)
         if control_check:
             self.handle_control_check(control_name)
         x, y = ensure_int(x, y)
@@ -85,7 +80,6 @@ class Control(Minitouch, Adb, Scrcpy, Window):
             self.click_adb
         )
         method(x, y)
-        self._next_desktop_click = monotonic() + uniform(0.8, 1.2)
 
 
     def multi_click(self, button, n, interval=(0.1, 0.2)):

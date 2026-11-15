@@ -4,6 +4,7 @@
 import time
 import numpy as np
 import random
+from copy import copy
 from enum import Enum
 from cached_property import cached_property
 from datetime import timedelta, datetime
@@ -16,7 +17,7 @@ from tasks.Exploration.assets import ExplorationAssets
 from tasks.Exploration.config import ChooseRarity, AutoRotate, AttackNumber, UpType
 from tasks.Component.GeneralBattle.general_battle import GeneralBattle
 from tasks.GameUi.game_ui import GameUi
-from tasks.GameUi.page import page_shikigami_records, page_main
+from tasks.GameUi.page import page_shikigami_records, page_main, page_exploration
 import tasks.Exploration.page as pages
 from tasks.RealmRaid.script_task import ScriptTask as RealmRaidScriptTask
 from tasks.Utils.config_enum import ShikigamiClass
@@ -441,17 +442,40 @@ class BaseExploration(GameUi, GeneralBattle, GeneralRoom, GeneralInvite, Replace
         return False
 
     def fire(self, button) -> bool:
-        self.ui_click_until_disappear(button, interval=3)
-        self.screenshot()
-        if (self.appear(self.I_E_SETTINGS_BUTTON) or
-                self.appear(self.I_E_AUTO_ROTATE_ON) or
-                self.appear(self.I_E_AUTO_ROTATE_OFF)):
-            # 如果还在探索说明，这个是显示滑动导致挑战按钮不在范围内
-            logger.warning('Fire button disappear, but still in exploration')
-            return False
-        self.run_general_battle(self._config.general_battle_config)
-        self.minions_cnt += 1
-        return True
+        # Revalidate the selected icon locally on fresh frames. A vanished
+        # icon can mean camera movement or a different page, not battle entry.
+        target = copy(button)
+        target.roi_front = list(button.roi_front)
+        x, y, width, height = target.roi_front
+        left, top = max(0, x - 35), max(0, y - 35)
+        target.roi_back = (left, top, min(1280, x + width + 35) - left,
+                           min(720, y + height + 35) - top)
+        timer = Timer(12).start()
+        while not timer.reached():
+            self.screenshot()
+            scene = self.get_current_scene()
+            if scene in (Scene.BATTLE_PREPARE, Scene.BATTLE_FIGHTING):
+                if self.run_general_battle(self._config.general_battle_config):
+                    self.minions_cnt += 1
+                    return True
+                return False
+            if scene in (Scene.ENTRANCE, Scene.WORLD, Scene.TEAM):
+                logger.warning(f'Battle entry cancelled: actual scene {scene.name}')
+                return False
+            if scene == Scene.UNKNOWN:
+                logger.warning('Battle entry reached an unknown page; returning to exploration')
+                self.recover_exploration_page()
+                return False
+            if not self.appear(target, threshold=button.threshold):
+                logger.info('Selected battle icon moved or disappeared; search again')
+                return False
+            self.appear_then_click(target, interval=3, threshold=button.threshold)
+        logger.warning('Battle entry timed out; resuming exploration detection')
+        return False
+
+    def recover_exploration_page(self):
+        logger.warning('Exploration page lost; use navigator to return instead of blind clicking')
+        self.goto_page(page_exploration, skip_first_screenshot=False, timeout=15)
 
     def wait_world_stable(self) -> bool:
         """

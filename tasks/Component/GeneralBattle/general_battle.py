@@ -39,7 +39,9 @@ class GeneralBattle(BattleWait, GeneralBuff):
         self.current_count += 1
         logger.info(f"Current count: {self.current_count}")
         # 战前设置
-        self.battle_before(buff, config)
+        if not self.battle_before(buff, config):
+            logger.warning('Battle preparation timed out; skip battle wait and random actions')
+            return False
         # 绿标
         if self.is_in_battle(False):
             self.green_mark(config.green_enable, config.green_mark)

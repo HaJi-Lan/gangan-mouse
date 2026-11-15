@@ -123,10 +123,13 @@ class SoloExploration(BaseExploration):
     def run_solo(self):
         logger.hr('solo')
         self.search_fail_timer = Timer(self.SEARCH_SWIPE_INTERVAL)
+        unknown_timer = Timer(5).start()
 
         while 1:
             self.screenshot()
             scene = self.get_current_scene()
+            if scene != Scene.UNKNOWN:
+                unknown_timer.reset()
             logger.info(f'[run_solo] Current scene: {scene.name}')  # TODO 2026.06.22 之后删掉这个刷屏的
             #
             if scene == Scene.WORLD:
@@ -192,6 +195,10 @@ class SoloExploration(BaseExploration):
             elif scene == Scene.BATTLE_PREPARE or scene == Scene.BATTLE_FIGHTING:
                 self.check_take_over_battle(is_screenshot=False, config=self._config.general_battle_config)
             elif scene == Scene.UNKNOWN:
+                if unknown_timer.reached():
+                    self.recover_exploration_page()
+                    self.explore_init = False
+                    unknown_timer.reset()
                 continue
 
     def run_leader(self):
