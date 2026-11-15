@@ -96,23 +96,27 @@ def ticket_count(result):
 
 def retry_exploration_counter(task, rule, sleep, log):
     """Recover an icon read as a leading digit, without altering OCR numbers."""
+    import cv2
     last, confirmed = None, 0
     for _ in range(3):
         sleep(0.3)
         task.screenshot()
         roi = rule.roi
-        # Retry the same ROI, then omit only the left icon/padding. Accept
-        # complete fractions with the real ticket capacity, on two frames.
-        value = None
-        for inset in (0, 8, 16):
+        # Expand outward only. Trimming the left edge can turn 30/30 into
+        # 0/30 with high confidence. Require agreement between expanded ROIs.
+        values = []
+        for pad_x, pad_y in ((4, 6), (8, 8)):
             x, y, width, height = roi
+            left, top = max(0, x - pad_x), max(0, y - pad_y)
             image = rule.pre_process(rule.crop(task.device.image,
-                                               (x + inset, y, width - inset, height)))
+                (left, top, x + width + pad_x - left, y + height + pad_y - top)))
+            image = cv2.cvtColor(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
             text, score = rule.model.ocr_single_line(image)
+            log(f'绘卷突破券复核：扩边=({pad_x},{pad_y}), 原文={text!r}, 置信度={score:.2f}')
             match = re.fullmatch(r'\s*(0|[1-9][0-9]?)\s*/\s*30\s*', text)
             if score >= rule.score and match and int(match[1]) <= 30:
-                value = int(match[1])
-                break
+                values.append(int(match[1]))
+        value = values[0] if len(values) == 2 and values[0] == values[1] else None
         if value is None:
             last, confirmed = None, 0
             continue
@@ -203,7 +207,7 @@ class ScrollsCycle:
         entrance = task.appear(task.I_E_EXPLORATION_CLICK) and task.appear(task.I_EXP_CREATE_TEAM)
         rule = task.O_REALM_RAID_NUMBER1 if entrance else task.O_REALM_RAID_NUMBER
         count = ticket_count(rule.ocr(task.device.image))
-        if count is None:
+        if count is None or (entrance and count == 0):
             self.log('绘卷突破券读数无效，重新截图识别')
             count = retry_exploration_counter(task, rule, self.sleep, self.log)
         if count is None:
