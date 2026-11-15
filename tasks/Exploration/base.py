@@ -2,6 +2,7 @@
 # @author runhey
 # github https://github.com/runhey
 import time
+import cv2
 import numpy as np
 import random
 from copy import copy
@@ -37,6 +38,7 @@ class Scene(Enum):
     BATTLE_PREPARE = 4  # 战斗准备
     BATTLE_FIGHTING = 5  # 战斗中
     TEAM = 6  # 组队
+    REWARD = 7  # 战斗奖励结算
 
 
 
@@ -72,21 +74,49 @@ class BaseExploration(GameUi, GeneralBattle, GeneralRoom, GeneralInvite, Replace
         if not reuse_screenshot:
             self.screenshot()
 
-        if self.appear(self.I_CHECK_EXPLORATION) and not self.appear(self.I_E_SETTINGS_BUTTON):
-            return Scene.WORLD
-        elif self.appear(self.I_E_EXPLORATION_CLICK):
+        # A loose world-map marker can match loading/result screens. Check
+        # the chapter and battle anchors before accepting that marker.
+        if self.appear(self.I_E_EXPLORATION_CLICK) and self.appear(self.I_EXP_CREATE_TEAM):
             return Scene.ENTRANCE
         elif self.appear(self.I_E_SETTINGS_BUTTON) or self.appear(self.I_E_AUTO_ROTATE_ON) or self.appear(self.I_E_AUTO_ROTATE_OFF):
             return Scene.MAIN
         elif self.is_in_prepare(False):
             return Scene.BATTLE_PREPARE
+        elif self.find_exploration_reward() is not None:
+            return Scene.REWARD
         elif self.is_in_battle(False):
             return Scene.BATTLE_FIGHTING
+        elif self.appear(self.I_CHECK_EXPLORATION):
+            return Scene.WORLD
         elif self.is_in_room() or self.appear(self.I_CREATE_ENSURE):
             return Scene.TEAM
 
         logger.info("Unknown scene")
         return Scene.UNKNOWN
+
+    def find_exploration_reward(self):
+        # Fixed reward ROIs, grayscale fallback for screenshot backends with
+        # differing channel order. Do not search the whole screen or lower scores.
+        for rule in (self.I_REWARD_GOLD, self.I_REWARD):
+            source = rule.corp(self.device.image)
+            template = rule.image
+            if source.shape[0] < template.shape[0] or source.shape[1] < template.shape[1]:
+                continue
+            result = cv2.matchTemplate(cv2.cvtColor(source, cv2.COLOR_BGR2GRAY),
+                cv2.cvtColor(template, cv2.COLOR_BGR2GRAY), cv2.TM_CCOEFF_NORMED)
+            _, score, _, point = cv2.minMaxLoc(result)
+            if np.isfinite(score) and score >= 0.9:
+                target = copy(rule)
+                target.roi_front = [rule.roi_back[0] + point[0], rule.roi_back[1] + point[1],
+                                    template.shape[1], template.shape[0]]
+                return target
+        return None
+
+    def collect_exploration_reward(self):
+        target = self.find_exploration_reward()
+        if target is not None:
+            logger.info('Exploration reward detected; click to continue')
+            self.click(target, interval=1)
 
     def pre_process(self):
         explorationConfig = self._config
@@ -451,17 +481,30 @@ class BaseExploration(GameUi, GeneralBattle, GeneralRoom, GeneralInvite, Replace
         target.roi_back = (left, top, min(1280, x + width + 35) - left,
                            min(720, y + height + 35) - top)
         timer = Timer(12).start()
+        clicked = False
+        departure_frames = 0
         while not timer.reached():
             self.screenshot()
             scene = self.get_current_scene()
+            if scene == Scene.REWARD:
+                self.collect_exploration_reward()
+                return False
             if scene in (Scene.BATTLE_PREPARE, Scene.BATTLE_FIGHTING):
                 if self.run_general_battle(self._config.general_battle_config):
                     self.minions_cnt += 1
                     return True
                 return False
             if scene in (Scene.ENTRANCE, Scene.WORLD, Scene.TEAM):
-                logger.warning(f'Battle entry cancelled: actual scene {scene.name}')
-                return False
+                if not clicked:
+                    return False
+                anchor = ((scene == Scene.WORLD and self.appear(self.I_EXP_ARROW_RIGHT))
+                          or (scene == Scene.ENTRANCE and self.appear(self.I_EXP_CREATE_TEAM)))
+                departure_frames = departure_frames + 1 if anchor else 0
+                if departure_frames >= 2:
+                    logger.warning(f'Battle entry cancelled: confirmed scene {scene.name}')
+                    return False
+                continue
+            departure_frames = 0
             if scene == Scene.UNKNOWN:
                 # Battle entry animations hide all UI anchors temporarily.
                 # Never invoke a page closer while the client is loading.
@@ -469,7 +512,7 @@ class BaseExploration(GameUi, GeneralBattle, GeneralRoom, GeneralInvite, Replace
             if not self.appear(target, threshold=button.threshold):
                 logger.info('Selected battle icon moved or disappeared; search again')
                 return False
-            self.appear_then_click(target, interval=3, threshold=button.threshold)
+            clicked = self.appear_then_click(target, interval=3, threshold=button.threshold) or clicked
         logger.warning('Battle entry timed out; resuming exploration detection')
         return False
 
@@ -490,15 +533,25 @@ class BaseExploration(GameUi, GeneralBattle, GeneralRoom, GeneralInvite, Replace
         https://github.com/runhey/OnmyojiAutoScript/issues/1588
         @return:
         """
-        while 1:
+        timer = Timer(8).start()
+        stable_frames = 0
+        while not timer.reached():
             scene = self.get_current_scene(reuse_screenshot=False)
-            if scene == Scene.WORLD and self.appear(self.I_EXP_ARROW_RIGHT):
-                return True
-            if scene == Scene.ENTRANCE:
-                logger.warning('World scene unstable, possibly transient frame after paper doll collection')
+            if scene not in (Scene.WORLD, Scene.UNKNOWN):
+                logger.info(f'World wait yielded to {scene.name}')
                 return False
-            if self.appear_then_click(self.I_EXP_ARROW_LEFT, interval=2):
+            if scene == Scene.UNKNOWN:
+                stable_frames = 0
                 continue
+            if self.appear(self.I_EXP_ARROW_RIGHT):
+                stable_frames += 1
+                if stable_frames >= 2:
+                    return True
+                continue
+            stable_frames = 0
+            self.appear_then_click(self.I_EXP_ARROW_LEFT, interval=2)
+        logger.warning('World map not stable after 8s; return to scene detection')
+        return False
 
 
 if __name__ == "__main__":

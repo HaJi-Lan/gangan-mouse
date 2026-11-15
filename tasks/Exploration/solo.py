@@ -192,6 +192,8 @@ class SoloExploration(BaseExploration):
                 self._search_next_area()
                 continue
             #
+            elif scene == Scene.REWARD:
+                self.collect_exploration_reward()
             elif scene == Scene.BATTLE_PREPARE or scene == Scene.BATTLE_FIGHTING:
                 self.check_take_over_battle(is_screenshot=False, config=self._config.general_battle_config)
             elif scene == Scene.UNKNOWN:
@@ -315,6 +317,8 @@ class SoloExploration(BaseExploration):
                 self._search_next_area()
                 continue
             #
+            elif scene == Scene.REWARD:
+                self.collect_exploration_reward()
             elif scene == Scene.BATTLE_PREPARE or scene == Scene.BATTLE_FIGHTING:
                 self.check_take_over_battle(is_screenshot=False, config=self._config.general_battle_config)
             elif scene == Scene.UNKNOWN:
@@ -370,6 +374,8 @@ class SoloExploration(BaseExploration):
                     wait_timer.reset()
                     continue
             #
+            elif scene == Scene.REWARD:
+                self.collect_exploration_reward()
             elif scene == Scene.BATTLE_PREPARE or scene == Scene.BATTLE_FIGHTING:
                 logger.info('[run_member] Handling scene: BATTLE')
                 self.check_take_over_battle(is_screenshot=False, config=self._config.general_battle_config)

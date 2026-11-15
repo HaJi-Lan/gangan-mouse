@@ -49,6 +49,52 @@ class ExplorationBattleTests(unittest.TestCase):
         task.appear_then_click.assert_called_once()
         task.run_general_battle.assert_called_once()
 
+    def test_world_wait_yields_to_chapter_battle_or_reward(self):
+        for scene in (Scene.MAIN, Scene.ENTRANCE, Scene.BATTLE_PREPARE, Scene.BATTLE_FIGHTING, Scene.REWARD):
+            with self.subTest(scene=scene):
+                task = self.task([scene, RuntimeError('wait failed to yield')])
+                self.assertFalse(task.wait_world_stable())
+                task.appear_then_click.assert_not_called()
+
+    def test_world_wait_is_bounded_when_no_arrow_is_available(self):
+        task = self.task([Scene.UNKNOWN])
+        with patch('tasks.Exploration.base.Timer') as timer:
+            timer.return_value.start.return_value.reached.side_effect = [False, True]
+            self.assertFalse(task.wait_world_stable())
+        task.appear_then_click.assert_not_called()
+
+    def test_world_wait_requires_two_stable_world_frames(self):
+        task = self.task([Scene.WORLD, Scene.WORLD])
+        self.assertTrue(task.wait_world_stable())
+        self.assertEqual(task.get_current_scene.call_count, 2)
+
+    def test_single_world_frame_after_click_cannot_cancel_battle_entry(self):
+        task = self.task([Scene.MAIN, Scene.WORLD, Scene.UNKNOWN, Scene.BATTLE_FIGHTING])
+        task.appear.side_effect = lambda target, **kw: target.name == task.I_NORMAL_BATTLE_BUTTON.name
+        self.assertTrue(task.fire(task.I_NORMAL_BATTLE_BUTTON))
+        task.recover_exploration_page.assert_not_called()
+
+    def test_actual_stuck_reward_frame_is_detected_and_collectable(self):
+        image = cv2.imread(str(ROOT / 'tests/fixtures/exploration/reward-stuck.png'))
+        for frame in (image, cv2.cvtColor(image, cv2.COLOR_BGR2RGB)):
+            task = object.__new__(BaseExploration)
+            task.device = NS(image=frame)
+            task.appear = lambda rule, **kw: rule.match(frame)
+            task.is_in_room = Mock(return_value=False)
+            task.click = Mock()
+            self.assertEqual(task.get_current_scene(), Scene.REWARD)
+            task.collect_exploration_reward()
+            task.click.assert_called_once()
+            target = task.click.call_args.args[0]
+            self.assertIn(target.name, (task.I_REWARD.name, task.I_REWARD_GOLD.name))
+
+    def test_reward_at_battle_entry_is_collected_without_navigation(self):
+        task = self.task([Scene.REWARD])
+        task.collect_exploration_reward = Mock()
+        self.assertFalse(task.fire(task.I_NORMAL_BATTLE_BUTTON))
+        task.collect_exploration_reward.assert_called_once()
+        task.recover_exploration_page.assert_not_called()
+
     def test_verified_battle_starts_only_after_fresh_local_icon_click(self):
         task = self.task([Scene.MAIN, Scene.BATTLE_PREPARE])
         original = list(task.I_NORMAL_BATTLE_BUTTON.roi_back)
