@@ -90,6 +90,24 @@ with tempfile.TemporaryDirectory(prefix='oas-scrolls-supervisor-') as tmp:
             assert [event['task'] for event in actual] == phases
             assert all(event['owner'] == 'MemoryScrolls' for event in actual)
             assert events[-1]['execution'] == {'task': '', 'owner': ''}
+        # The owner must be delayed after a deadline, including the
+        # supervisor's final running_task save, so it cannot restart at once.
+        from datetime import datetime
+        data['exploration']['scrolls']['scrolls_limit_minutes'] = 1
+        path.write_text(json.dumps(data), encoding='utf-8')
+        phases.clear()
+        def expire(self, phase):
+            phases.append(phase)
+            self._desktop_scrolls_cycle.started_at -= 61
+            return True
+        with patch.object(script.Script, 'run', expire):
+            runner = object.__new__(DesktopScript)
+            runner.config_name = 'fixture'
+            assert runner.run('MemoryScrolls')
+            assert phases == ['Exploration']
+            runner.config.model.running_task = ''
+            saved = json.loads(path.read_text('utf-8'))
+            assert datetime.fromisoformat(saved['memory_scrolls']['scheduler']['next_run']) > datetime.now()
     finally:
         os.chdir(upstream)
 print('Supervisor integration OK, no game access')

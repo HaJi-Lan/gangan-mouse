@@ -13,6 +13,16 @@ from tasks.Component.GeneralBattle.general_battle import GeneralBattle
 
 
 class ExplorationBattleTests(unittest.TestCase):
+    def test_exploration_ignores_old_count_and_time_limits(self):
+        from datetime import datetime, timedelta
+        task = object.__new__(BaseExploration)
+        task.minions_cnt = 9999
+        task.start_time = datetime.now() - timedelta(days=2)
+        task.limit_time = timedelta(seconds=1)
+        task.__dict__['_config'] = NS(scrolls=NS(), exploration_config=NS(minions_cnt=1))
+        task.activate_realm_raid = Mock()
+        self.assertFalse(task.check_exit())
+        task.activate_realm_raid.assert_called_once()
     def task(self, scenes):
         task = object.__new__(BaseExploration)
         task.screenshot = Mock()

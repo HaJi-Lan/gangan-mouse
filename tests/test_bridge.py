@@ -165,6 +165,20 @@ class Script:
                         self.assertEqual([field['name'] for field in fields],
                                          ['lock_team_enable', 'random_click_swipt_enable'])
 
+    def test_total_scroll_duration_is_shared_and_exploration_limits_hidden(self):
+        for task in ('Exploration', 'MemoryScrolls'):
+            data = self.request('schema', config='oas1', task=task)['data']['groups']
+            self.assertNotIn('limit_time', {f['name'] for f in data['exploration_config']})
+            self.assertNotIn('minions_cnt', {f['name'] for f in data['exploration_config']})
+            self.assertIn('scrolls_limit_minutes', {f['name'] for f in data['scrolls']})
+        result = self.request('set', config='oas1', task='MemoryScrolls', group='scrolls',
+                              argument='scrolls_limit_minutes', value=120)
+        self.assertTrue(result['ok'], result)
+        data = self.request('schema', config='oas1', task='Exploration')['data']['groups']
+        self.assertEqual(next(f['value'] for f in data['scrolls'] if f['name']=='scrolls_limit_minutes'), 120)
+        self.assertFalse(self.request('set', config='oas1', task='Exploration', group='scrolls',
+                                     argument='scrolls_limit_minutes', value=0)['ok'])
+
     def test_fresh_clone_has_chinese_notes_without_generated_upstream_json(self):
         generated = self.fixture / 'module/config/i18n/zh-CN.json'
         content = generated.read_bytes() if generated.exists() else None

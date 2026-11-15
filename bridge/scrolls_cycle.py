@@ -25,6 +25,7 @@ def install_config_models():
     from pydantic import create_model, Field
     from tasks.Exploration.config import Exploration, Scrolls
     scrolls = create_model('DesktopScrolls', __base__=Scrolls,
+        scrolls_limit_minutes=(int, Field(default=270, ge=1, le=10080, description='scrolls_limit_minutes_help')),
         scrolls_threshold=(int, Field(default=25, ge=0, le=30, description='scrolls_threshold_help')),
         scrolls_transition_delay_enable=(bool, Field(default=False, description='scrolls_transition_delay_enable_help')))
     exploration = create_model('DesktopExploration', __base__=Exploration,
@@ -53,6 +54,8 @@ def task_schema(config, task):
     for name in list(groups):
         groups[name] = [field for field in groups[name] if field['name'] not in hidden_buff_fields]
         source_group = COLLECTION_GROUPS.get(name, (task, name))[1]
+        if source_group == 'exploration_config':
+            groups[name] = [field for field in groups[name] if field['name'] not in ('limit_time', 'minions_cnt')]
         if source_group in ('switch_soul', 'switch_soul_config'):
             del groups[name]
         elif source_group == 'scheduler':
@@ -78,6 +81,9 @@ def set_task_arg(config, task, group, argument, value):
             raise ValueError('突破券阈值必须为 0～30 的整数')
     if argument == 'scrolls_transition_delay_enable' and type(value) is not bool:
         raise ValueError('切换间隔开关必须为布尔值')
+    if group == 'scrolls' and argument == 'scrolls_limit_minutes':
+        if type(value) is not int or not 1 <= value <= 10080:
+            raise ValueError('绘卷总运行时长必须为 1～10080 分钟的整数')
     return config.model.script_set_arg(task, group, argument, value)
 
 
@@ -121,11 +127,15 @@ def read_exploration_counter(task, rule, log):
 
 
 class ScrollsCycle:
-    def __init__(self, read_config, log, sleep=time.sleep, randint=random.randint):
+    def __init__(self, read_config, log, sleep=time.sleep, randint=random.randint, clock=time.monotonic, on_timeout=None):
         self.read_config = read_config
         self.log = log
         self.sleep = sleep
         self.randint = randint
+        self.clock = clock
+        self.on_timeout = on_timeout
+        self.started_at = None
+        self.timed_out = False
         self.active = False
         self.owner = None
         self.requested = None
@@ -137,7 +147,19 @@ class ScrollsCycle:
     def enabled(self):
         config = self.read_config()
         return (config.exploration.scrolls.scrolls_enable
-                and getattr(config, self.owner).scheduler.enable)
+                and getattr(config, self.owner).scheduler.enable and not self.expired())
+
+    def expired(self):
+        if self.started_at is None:
+            return False
+        minutes = getattr(self.read_config().exploration.scrolls, 'scrolls_limit_minutes', 270)
+        self.timed_out = self.timed_out or self.clock() - self.started_at >= minutes * 60
+        return self.timed_out
+
+    def checkpoint(self):
+        if self.expired():
+            from module.exception import TaskEnd
+            raise TaskEnd
 
     def pause(self, seconds):
         # Changes to the manual switch take effect during the wait, too.
@@ -148,6 +170,9 @@ class ScrollsCycle:
         return self.enabled()
 
     def run(self, owner, run_leg):
+        if self.resume_owner != owner:
+            self.started_at = self.clock()
+            self.timed_out = False
         self.owner = owner
         self.active = True
         self.interrupted = False
@@ -183,6 +208,11 @@ class ScrollsCycle:
                 phase = next_phase
             self.resume_owner = None
             self.resume_phase = 'Exploration'
+            if self.timed_out:
+                self.log('绘卷总运行时长已到，结束探索＋突破；按调度器安排下次运行')
+                if self.on_timeout:
+                    self.on_timeout(owner)
+            self.started_at = None
             return True
         finally:
             self.active = False
@@ -261,6 +291,20 @@ class ScrollsCycle:
         upstream = module.ScriptTask
         if task_name == 'Exploration':
             class Task(upstream):
+                def screenshot(self):
+                    super().screenshot()
+                    if not getattr(self, '_cycle_battle_active', False):
+                        if (not self.is_in_real_battle(False) and not self.is_in_prepare(False)
+                                and self.find_exploration_reward() is None):
+                            cycle.checkpoint()
+
+                def run_general_battle(self, *args, **kwargs):
+                    self._cycle_battle_active = True
+                    try:
+                        return super().run_general_battle(*args, **kwargs)
+                    finally:
+                        self._cycle_battle_active = False
+
                 def activate_realm_raid(self, scrolls, con):
                     return cycle.exploration_check(self, scrolls, con)
 
@@ -269,6 +313,10 @@ class ScrollsCycle:
                         return super().set_next_run(task, *args, **kwargs)
         else:
             class Task(upstream):
+                def run_general_battle(self, *args, **kwargs):
+                    cycle.checkpoint()
+                    return super().run_general_battle(*args, **kwargs)
+
                 def check_ticket(self, base=0):
                     # Once raid starts, consume the remaining tickets even
                     # below the independent personal-raid number_base setting.

@@ -89,7 +89,12 @@ def install_runtime_policy():
                 if read_config().exploration.scrolls.scrolls_enable:
                     cycle = getattr(self, '_desktop_scrolls_cycle', None)
                     if cycle is None:
-                        cycle = ScrollsCycle(read_config, logger.info)
+                        def finish_timeout(owner):
+                            from datetime import datetime
+                            config = read_config()
+                            config.task_delay('MemoryScrolls' if owner == 'memory_scrolls' else 'Exploration',
+                                              start_time=datetime.now(), success=True)
+                        cycle = ScrollsCycle(read_config, logger.info, on_timeout=finish_timeout)
                         attach_cycle_loader(cycle)
                         self._desktop_scrolls_cycle = cycle
                         cycle_context['cycle'] = cycle

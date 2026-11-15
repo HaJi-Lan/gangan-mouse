@@ -304,6 +304,78 @@ class ScrollsCycleTests(unittest.TestCase):
         task.set_next_run('RealmRaid', success=True)
         self.assertFalse(self.cycle.depleted)
 
+    def test_total_deadline_covers_both_phases_and_schedules_once(self):
+        now = [0]
+        finish = Mock()
+        self.settings.scrolls_limit_minutes = 1
+        cycle = ScrollsCycle(lambda: self.config, self.log, self.sleep, self.random,
+                             clock=lambda: now[0], on_timeout=finish)
+        phases = []
+        def leg(phase):
+            phases.append(phase)
+            if phase == 'Exploration':
+                now[0] += 40
+                cycle.requested = 'RealmRaid'
+            else:
+                now[0] += 21
+                cycle.depleted = True
+            return True
+        self.assertTrue(cycle.run('memory_scrolls', leg))
+        self.assertEqual(phases, ['Exploration', 'RealmRaid'])
+        finish.assert_called_once_with('memory_scrolls')
+
+    def test_failure_resume_does_not_reset_total_deadline(self):
+        now = [0]
+        finish = Mock()
+        self.settings.scrolls_limit_minutes = 1
+        cycle = ScrollsCycle(lambda: self.config, self.log, self.sleep, self.random,
+                             clock=lambda: now[0], on_timeout=finish)
+        self.assertFalse(cycle.run('exploration', lambda _: False))
+        now[0] = 61
+        leg = Mock()
+        self.assertTrue(cycle.run('exploration', leg))
+        leg.assert_not_called()
+        finish.assert_called_once_with('exploration')
+
+    def test_transition_wait_counts_against_total_duration(self):
+        now = [0]
+        self.settings.scrolls_limit_minutes = 1
+        self.settings.scrolls_transition_delay_enable = True
+        cycle = ScrollsCycle(lambda: self.config, self.log,
+            sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
+            randint=lambda *args: 25, clock=lambda: now[0])
+        phases = []
+        def leg(phase):
+            phases.append(phase)
+            now[0] = 58
+            cycle.requested = 'RealmRaid'
+            return True
+        self.assertTrue(cycle.run('exploration', leg))
+        self.assertEqual(phases, ['Exploration'])
+        self.assertEqual(now[0], 60)
+
+    def test_active_battle_finishes_before_deadline_checkpoint(self):
+        now = [0]
+        self.settings.scrolls_limit_minutes = 1
+        cycle = ScrollsCycle(lambda: self.config, self.log, clock=lambda: now[0])
+        cycle.started_at = 0
+        cycle.active = True
+        class Upstream:
+            def screenshot(self): pass
+            def is_in_real_battle(self, *args): return False
+            def is_in_prepare(self, *args): return False
+            def find_exploration_reward(self): return None
+            def run_general_battle(self):
+                now[0] = 61
+                self.screenshot()
+                return 'settled'
+        module = SimpleNamespace(ScriptTask=Upstream)
+        cycle.adapt(module, 'Exploration')
+        task = module.ScriptTask()
+        self.assertEqual(task.run_general_battle(), 'settled')
+        with game_dependencies(), self.assertRaises(TaskEnd):
+            task.screenshot()
+
 
 if __name__ == '__main__':
     unittest.main()

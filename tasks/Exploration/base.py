@@ -408,12 +408,6 @@ class BaseExploration(GameUi, GeneralBattle, GeneralRoom, GeneralInvite, Replace
     #
     def check_exit(self) -> bool:
         # True 表示要退出这个任务
-        if self.minions_cnt >= self._config.exploration_config.minions_cnt:
-            logger.info('Minions count is enough, exit')
-            return True
-        if datetime.now() - self.start_time >= self.limit_time:
-            logger.info('Exploration time limit out')
-            return True
         self.activate_realm_raid(self._config.scrolls, self._config.exploration_config)
         return False
 
