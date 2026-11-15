@@ -36,6 +36,8 @@ class BridgeTests(unittest.TestCase):
         (cls.fixture / 'script.py').write_text('''
 import time
 from module.logger import logger
+def load_module(name, path):
+    raise AssertionError('Fixture must not load actual game tasks')
 class Script:
     def __init__(self, config_name):
         self.config_name = config_name
@@ -66,7 +68,7 @@ class Script:
         object.__setattr__(config.model.memory_scrolls.scheduler, 'enable', False)
         config.update_scheduler()
         scheduled = {task.command for task in config.pending_task + config.waiting_task}
-        assert 'Exploration' in scheduled and 'RealmRaid' not in scheduled
+        assert 'Exploration' in scheduled and 'RealmRaid' in scheduled
         object.__setattr__(config.model.exploration.scrolls, 'scrolls_enable', False)
         object.__setattr__(config.model.memory_scrolls.scheduler, 'enable', True)
         config.update_scheduler()
@@ -170,11 +172,14 @@ class Script:
             data = self.request('schema', config='oas1', task=task)['data']['groups']
             self.assertNotIn('limit_time', {f['name'] for f in data['exploration_config']})
             self.assertNotIn('minions_cnt', {f['name'] for f in data['exploration_config']})
-            self.assertIn('scrolls_limit_minutes', {f['name'] for f in data['scrolls']})
+            if task == 'MemoryScrolls':
+                self.assertIn('scrolls_limit_minutes', {f['name'] for f in data['scrolls']})
+            else:
+                self.assertNotIn('scrolls', data)
         result = self.request('set', config='oas1', task='MemoryScrolls', group='scrolls',
                               argument='scrolls_limit_minutes', value=120)
         self.assertTrue(result['ok'], result)
-        data = self.request('schema', config='oas1', task='Exploration')['data']['groups']
+        data = self.request('schema', config='oas1', task='MemoryScrolls')['data']['groups']
         self.assertEqual(next(f['value'] for f in data['scrolls'] if f['name']=='scrolls_limit_minutes'), 120)
         self.assertFalse(self.request('set', config='oas1', task='Exploration', group='scrolls',
                                      argument='scrolls_limit_minutes', value=0)['ok'])
@@ -248,7 +253,7 @@ class Script:
                                        ('raid_config', 'number_attack', 9)]:
             result = self.request('set', config=name, task='MemoryScrolls', group=group, argument=argument, value=value)
             self.assertTrue(result['ok'], result)
-        for task, group, argument, expected in [('Exploration', 'scrolls', 'scrolls_threshold', 15),
+        for task, group, argument, expected in [('MemoryScrolls', 'scrolls', 'scrolls_threshold', 15),
                                                 ('RealmRaid', 'raid_config', 'number_attack', 9)]:
             fields = self.request('schema', config=name, task=task)['data']['groups'][group]
             self.assertEqual(next(f['value'] for f in fields if f['name'] == argument), expected)

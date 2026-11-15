@@ -44,8 +44,6 @@ def install_runtime_policy():
                 hidden.add('MemoryScrolls')
             elif self.model.memory_scrolls.scheduler.enable:
                 hidden.update(('Exploration', 'RealmRaid'))
-            elif self.model.exploration.scheduler.enable:
-                hidden.add('RealmRaid')
             self.pending_task = [task for task in self.pending_task if task.command not in hidden]
             self.waiting_task = [task for task in self.waiting_task if task.command not in hidden]
             if cycle_context['recovery']:
@@ -62,7 +60,22 @@ def install_runtime_policy():
             return super().task_call(task, force_call=force_call)
 
     config_module.Config = Config
+    import script as script_module
     from script import Script as UpstreamScript
+    original_load = script_module.load_module
+
+    def load_task(name, path):
+        from pathlib import Path
+        module = original_load(name, path)
+        cycle = cycle_context['cycle']
+        if Path(path).parent.name == 'Exploration' and not (cycle and cycle.active):
+            upstream = module.ScriptTask
+            class StandaloneExploration(upstream):
+                def activate_realm_raid(self, scrolls, con):
+                    return
+            module.ScriptTask = StandaloneExploration
+        return module
+    script_module.load_module = load_task
 
     class Script(UpstreamScript):
         def report_execution(self, task, owner=''):
@@ -86,7 +99,7 @@ def install_runtime_policy():
 
         def run_enabled(self, command):
             key = convert_to_underscore(command)
-            if key in ('memory_scrolls', 'exploration'):
+            if key == 'memory_scrolls':
                 from scrolls_cycle import ScrollsCycle, attach_cycle_loader
                 def read_config():
                     return Config(self.config_name)

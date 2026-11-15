@@ -113,6 +113,19 @@ with tempfile.TemporaryDirectory(prefix='oas-scrolls-supervisor-') as tmp:
             runner.config.model.running_task = ''
             saved = json.loads(path.read_text('utf-8'))
             assert datetime.fromisoformat(saved['memory_scrolls']['scheduler']['next_run']) > datetime.now()
+        # Standalone exploration stays standalone even if the collection's
+        # saved scroll switch is still on.
+        path.write_text(json.dumps(data), encoding='utf-8')
+        phases.clear()
+        with patch.object(script.Script, 'run', lambda self, phase: phases.append(phase) or True):
+            runner = object.__new__(DesktopScript)
+            runner.config_name = 'fixture'
+            assert runner.run('Exploration')
+            assert phases == ['Exploration']
+            assert not hasattr(runner, '_desktop_scrolls_cycle')
+        module = script.load_module('script_task', str(upstream / 'tasks/Exploration/script_task.py'))
+        task = object.__new__(module.ScriptTask)
+        assert task.activate_realm_raid(None, None) is None
     finally:
         os.chdir(upstream)
 print('Supervisor integration OK, no game access')

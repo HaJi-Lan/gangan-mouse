@@ -45,6 +45,8 @@ def task_schema(config, task):
             groups[name] = config.model.script_task(source_task)[source_group]
     else:
         groups = config.model.script_task(task)
+        if convert_to_underscore(task) == 'exploration':
+            groups.pop('scrolls', None)
     if 'scrolls' in groups:
         groups['scrolls'] = [field for field in groups['scrolls'] if field['name'] != 'scrolls_cd']
     hidden_buff_fields = {'buff_gold_50_click', 'buff_gold_100_click',
