@@ -2,6 +2,8 @@
 # @author runhey
 # github https://github.com/runhey
 import random
+import cv2
+import numpy as np
 from time import sleep
 from datetime import time, datetime, timedelta
 
@@ -24,6 +26,41 @@ class ScriptTask(GeneralBattle, GeneralInvite, GeneralBuff, GeneralRoom, GameUi,
 
     # A filled teammate slot must not misidentify a three-person Orochi room.
     invite_room_type = RoomType.NORMAL_3
+
+    def appear(self, target, interval=None, threshold=None):
+        matched = super().appear(target, interval=interval, threshold=threshold)
+        if matched or interval is not None:
+            return matched
+        # Restrict channel-independent matching to fixed battle/reward ROIs.
+        # Existing interval handling and normal colored matching stay intact.
+        if target not in (self.I_REWARD, self.I_GREED_GHOST, self.I_REWARD_GOLD,
+                          self.I_BATTLE_INFO, self.I_BATTLE_STATE_INFO):
+            return False
+        source, template = target.corp(self.device.image), target.image
+        if source.shape[0] < template.shape[0] or source.shape[1] < template.shape[1]:
+            return False
+        scores = cv2.matchTemplate(cv2.cvtColor(source, cv2.COLOR_BGR2GRAY),
+            cv2.cvtColor(template, cv2.COLOR_BGR2GRAY), cv2.TM_CCOEFF_NORMED)
+        _, score, _, point = cv2.minMaxLoc(scores)
+        if not np.isfinite(score) or score < max(0.9, threshold or target.threshold):
+            return False
+        target.last_score = float(score)
+        target.roi_front = [target.roi_back[0] + point[0], target.roi_back[1] + point[1],
+                            template.shape[1], template.shape[0]]
+        return True
+
+    def battle_before(self, buff, config, timeout=30):
+        # Locked teams skip the preparation UI; loading and the first waves
+        # can exceed the generic five-second limit.
+        return super().battle_before(buff, config, timeout=timeout)
+
+    def resume_pending_battle(self):
+        if (self.is_in_battle(False) or self.appear(self.I_GREED_GHOST)
+                or self.appear(self.I_REWARD_GOLD)):
+            logger.info('Orochi pending battle or reward detected; finish before next challenge')
+            self.run_general_battle(config=self.config.orochi.general_battle_config)
+            return True
+        return False
 
     def run(self) -> bool:
         # 御魂切换方式一
@@ -283,6 +320,8 @@ class ScriptTask(GeneralBattle, GeneralInvite, GeneralBuff, GeneralRoom, GameUi,
             if self.appear_then_click(self.I_PET_PRESENT, action=self.C_WIN_3, interval=1):
                 continue
 
+            if self.resume_pending_battle():
+                continue
             if not is_in_orochi():
                 continue
 
@@ -446,7 +485,7 @@ class ScriptTask(GeneralBattle, GeneralInvite, GeneralBuff, GeneralRoom, GameUi,
                     if self.click(action_click, interval=1.5):
                         continue
                 return True
-            if self.appear(self.I_REWARD):
+            if self.appear(self.I_REWARD) or self.appear(self.I_REWARD_GOLD):
                 # 魂
                 logger.info('Win battle')
                 appear_greed_ghost = self.appear(self.I_GREED_GHOST)
@@ -457,10 +496,10 @@ class ScriptTask(GeneralBattle, GeneralInvite, GeneralBuff, GeneralRoom, GameUi,
                         continue
 
                     action_click = random.choice([self.C_REWARD_1, self.C_REWARD_2, self.C_REWARD_3])
-                    if self.appear_then_click(self.I_REWARD, action=action_click, interval=1.5):
+                    if self.appear(self.I_REWARD) or self.appear(self.I_REWARD_GOLD):
+                        self.click(action_click, interval=1.5)
                         continue
-                    if not self.appear(self.I_REWARD):
-                        break
+                    break
                 return True
 
             if self.appear(self.I_FALSE):
