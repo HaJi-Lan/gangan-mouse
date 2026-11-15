@@ -78,9 +78,9 @@ class BaseExploration(GameUi, GeneralBattle, GeneralRoom, GeneralInvite, Replace
             return Scene.ENTRANCE
         elif self.appear(self.I_E_SETTINGS_BUTTON) or self.appear(self.I_E_AUTO_ROTATE_ON) or self.appear(self.I_E_AUTO_ROTATE_OFF):
             return Scene.MAIN
-        elif self.is_in_prepare():
+        elif self.is_in_prepare(False):
             return Scene.BATTLE_PREPARE
-        elif self.is_in_battle():
+        elif self.is_in_battle(False):
             return Scene.BATTLE_FIGHTING
         elif self.is_in_room() or self.appear(self.I_CREATE_ENSURE):
             return Scene.TEAM
@@ -463,9 +463,9 @@ class BaseExploration(GameUi, GeneralBattle, GeneralRoom, GeneralInvite, Replace
                 logger.warning(f'Battle entry cancelled: actual scene {scene.name}')
                 return False
             if scene == Scene.UNKNOWN:
-                logger.warning('Battle entry reached an unknown page; returning to exploration')
-                self.recover_exploration_page()
-                return False
+                # Battle entry animations hide all UI anchors temporarily.
+                # Never invoke a page closer while the client is loading.
+                continue
             if not self.appear(target, threshold=button.threshold):
                 logger.info('Selected battle icon moved or disappeared; search again')
                 return False
@@ -474,8 +474,15 @@ class BaseExploration(GameUi, GeneralBattle, GeneralRoom, GeneralInvite, Replace
         return False
 
     def recover_exploration_page(self):
+        if self.is_in_prepare(False) or self.is_in_battle(False):
+            return False
+        current = self.get_current_page(skip_first_screenshot=True, fallback=True)
+        if current is None or current.key.startswith('page_battle') or current.key == 'page_reward':
+            logger.info('Page unconfirmed or battle-related; wait without returning')
+            return False
         logger.warning('Exploration page lost; use navigator to return instead of blind clicking')
         self.goto_page(page_exploration, skip_first_screenshot=False, timeout=15)
+        return True
 
     def wait_world_stable(self) -> bool:
         """

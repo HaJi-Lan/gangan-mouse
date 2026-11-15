@@ -34,13 +34,20 @@ class ExplorationBattleTests(unittest.TestCase):
         self.assertEqual(task.minions_cnt, 0)
 
     def test_changed_page_never_reuses_old_click_coordinates(self):
-        for scene in (Scene.ENTRANCE, Scene.WORLD, Scene.TEAM, Scene.UNKNOWN):
+        for scene in (Scene.ENTRANCE, Scene.WORLD, Scene.TEAM):
             with self.subTest(scene=scene):
                 task = self.task([scene])
                 self.assertFalse(task.fire(task.I_NORMAL_BATTLE_BUTTON))
                 task.appear_then_click.assert_not_called()
                 task.run_general_battle.assert_not_called()
-                self.assertEqual(task.recover_exploration_page.called, scene == Scene.UNKNOWN)
+                task.recover_exploration_page.assert_not_called()
+
+    def test_loading_frames_after_click_never_trigger_return_navigation(self):
+        task = self.task([Scene.MAIN, Scene.UNKNOWN, Scene.UNKNOWN, Scene.BATTLE_FIGHTING])
+        self.assertTrue(task.fire(task.I_NORMAL_BATTLE_BUTTON))
+        task.recover_exploration_page.assert_not_called()
+        task.appear_then_click.assert_called_once()
+        task.run_general_battle.assert_called_once()
 
     def test_verified_battle_starts_only_after_fresh_local_icon_click(self):
         task = self.task([Scene.MAIN, Scene.BATTLE_PREPARE])
@@ -64,10 +71,30 @@ class ExplorationBattleTests(unittest.TestCase):
 
     def test_unknown_page_recovery_uses_navigation(self):
         task = object.__new__(BaseExploration)
+        task.is_in_prepare = Mock(return_value=False)
+        task.is_in_battle = Mock(return_value=False)
+        task.get_current_page = Mock(return_value=NS(key='page_mall'))
         task.goto_page = Mock()
         task.recover_exploration_page()
         self.assertEqual(task.goto_page.call_args.kwargs,
                          {'skip_first_screenshot': False, 'timeout': 15})
+
+    def test_loading_or_battle_pages_cannot_trigger_return_navigation(self):
+        for key in (None, 'page_battle', 'page_battle_prepare', 'page_battle_result', 'page_reward'):
+            task = object.__new__(BaseExploration)
+            task.is_in_prepare = Mock(return_value=False)
+            task.is_in_battle = Mock(return_value=False)
+            task.get_current_page = Mock(return_value=NS(key=key) if key else None)
+            task.goto_page = Mock()
+            self.assertFalse(task.recover_exploration_page())
+            task.goto_page.assert_not_called()
+
+    def test_fast_battle_settlement_can_bypass_loading_frame(self):
+        task = object.__new__(GeneralBattle)
+        task.screenshot = Mock()
+        task.is_in_real_battle = Mock(return_value=False)
+        task.appear = Mock(side_effect=lambda rule: rule is task.I_REWARD)
+        self.assertTrue(task.battle_before(None, NS()))
 
     def test_unknown_solo_scene_recovers_after_five_seconds(self):
         from tasks.Exploration.solo import SoloExploration

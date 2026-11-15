@@ -60,7 +60,11 @@ class GeneralBattle(BattleWait, GeneralBuff):
         confed = False
         while not timeout_timer.reached():
             self.screenshot()
-            if self.is_in_real_battle(False):  # 战斗阶段
+            if (self.is_in_real_battle(False) or self.appear(self.I_WIN)
+                    or self.appear(self.I_FALSE) or self.appear(self.I_REWARD)
+                    or self.appear(self.I_REWARD_GOLD) or self.appear(self.I_DE_WIN)):
+                # Fast battles may reach settlement before the first frame
+                # with the battle HUD is captured.
                 return True
             if self.appear_then_click(self.I_DISABLE_7DAYS_DIFF_SOUL, interval=0.6):  # 关闭御魂不一致提示
                 continue
