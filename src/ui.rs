@@ -379,8 +379,8 @@ impl eframe::App for Desktop {
             if self.restart_required { ui.colored_label(ACCENT, "软件已更新，请关闭并重新打开以使用新版本。"); }
             section_heading(ui, "02", "参数");
             ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(self.label(&self.task)).size(16.0).strong());
+            ui.label(RichText::new(self.label(&self.task)).size(16.0).strong());
+            ui.horizontal(|ui| {
                 if let Some(field) = self.groups["scheduler"].as_array().and_then(|fields| fields.iter().find(|f| f["name"] == "enable")).cloned() {
                     let key = self.key("scheduler", "enable");
                     let mut checked = self.editor.value(&key).unwrap_or(&field["value"]).as_bool().unwrap_or(false);
@@ -388,16 +388,13 @@ impl eframe::App for Desktop {
                         self.editor.change(key, Draft { value:json!(checked), kind:"boolean".into(), title:"启用此任务".into() }, &field["value"]);
                     }
                 }
+                ui.checkbox(&mut self.show_help, "显示说明");
             });
             let note = help::description(&self.translations, &self.task, None);
             if self.show_help && !note.is_empty() {
                 egui::CollapsingHeader::new("任务说明").id_salt((&self.task, "task_note")).default_open(false)
                     .show(ui, |ui| { ui.add(egui::Label::new(RichText::new(note).size(13.0).color(MUTED)).wrap()); });
             }
-            ui.add_space(5.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.checkbox(&mut self.show_help, "显示说明");
-            });
             ui.add_space(5.0);
             if self.groups.is_null() { ui.horizontal(|ui| { ui.spinner(); ui.label("正在加载设置…"); }); }
             else {
