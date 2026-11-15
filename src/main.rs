@@ -42,7 +42,7 @@ struct Desktop {
     icon: egui::TextureHandle,
     states: HashMap<String, i64>,
     logs: VecDeque<(String, String)>,
-    category: String,
+    task_switches: HashMap<String, HashMap<String, bool>>,
     executions: HashMap<String, execution::Execution>,
     show_all_logs: bool,
 }
@@ -77,7 +77,7 @@ impl Desktop {
             pending_action: None, show_help: true, show_logs: true, errors_only: false, follow_logs: true,
             icon: cc.egui_ctx.load_texture("app", egui::ColorImage::from_rgba_unmultiplied([128, 128], include_bytes!("../assets/app-icon.rgba")), egui::TextureOptions::LINEAR),
             states: HashMap::new(), logs: VecDeque::new(), show_all_logs: false,
-            category: String::new(), executions: HashMap::new(),
+            task_switches: HashMap::new(), executions: HashMap::new(),
         }
     }
     fn label(&self, key: &str) -> String {
@@ -130,6 +130,11 @@ impl Desktop {
                     self.log(String::new(), format!("更新完成：{}", event["data"]));
                 }
                 "response" => {
+                    if event["ok"] == true {
+                        if let (Some(config), Some(switches)) = (event["data"]["config"].as_str(), event["data"]["task_switches"].as_object()) {
+                            self.task_switches.insert(config.into(), switches.iter().filter_map(|(task, value)| value.as_bool().map(|v| (task.clone(), v))).collect());
+                        }
+                    }
                     if self.editor.acknowledge(event["id"].as_str(), event["ok"] == true) {
                         if event["ok"] == true {
                             let data = &event["data"];

@@ -182,6 +182,21 @@ class Script:
         self.assertNotIn('invite_config', groups)
         self.assertIn('invite_config', self.request('schema', config='oas1', task='Exploration')['data']['groups'])
 
+    def test_enabled_task_list_reads_saved_switches_including_stopped_tasks(self):
+        before = self.request('schema', config='oas1', task='Orochi')['data']['task_switches']['Orochi']
+        try:
+            result = self.request('set', config='oas1', task='Orochi', group='scheduler', argument='enable', value=True)
+            self.assertTrue(result['ok'], result)
+            self.assertTrue(result['data']['task_switches']['Orochi'])
+            switches = self.request('schema', config='oas1', task='MemoryScrolls')['data']['task_switches']
+            self.assertTrue(switches['Orochi'])
+            self.assertIn('RealmRaid', switches)
+            self.assertNotIn('FloatParade', switches)
+            result = self.request('set', config='oas1', task='Orochi', group='scheduler', argument='enable', value=False)
+            self.assertFalse(result['data']['task_switches']['Orochi'])
+        finally:
+            self.request('set', config='oas1', task='Orochi', group='scheduler', argument='enable', value=before)
+
     def test_fresh_clone_has_chinese_notes_without_generated_upstream_json(self):
         generated = self.fixture / 'module/config/i18n/zh-CN.json'
         content = generated.read_bytes() if generated.exists() else None

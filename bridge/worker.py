@@ -54,6 +54,17 @@ class Runtime:
         # an old GUI snapshot.
         return self.Config(name)
 
+    def task_switches(self, config):
+        from module.config.utils import convert_to_underscore
+        result = {}
+        for tasks in self.menu.values():
+            for task in tasks:
+                model = getattr(config.model, convert_to_underscore(task), None)
+                scheduler = getattr(model, 'scheduler', None)
+                if scheduler is not None:
+                    result[task] = bool(scheduler.enable)
+        return result
+
     def list_configs(self):
         # Upstream all_script_files() recreates oas1 when empty. Listing here
         # must be read-only, including after the last config is deleted.
@@ -81,7 +92,8 @@ class Runtime:
         if command == 'schema':
             self.check_task(request['task'])
             config = self.config(name)
-            return dict(config=name, task=request['task'], groups=task_schema(config, request['task']))
+            return dict(config=name, task=request['task'], groups=task_schema(config, request['task']),
+                        task_switches=self.task_switches(config))
         if command == 'export_logs':
             self.check_name(name)
             from diagnostics import export_logs
@@ -92,7 +104,8 @@ class Runtime:
             ok = set_task_arg(config, request['task'], request['group'], request['argument'], request['value'])
             if not ok:
                 raise ValueError('上游配置模型拒绝了此修改')
-            return dict(config=name, task=request['task'], groups=task_schema(config, request['task']))
+            return dict(config=name, task=request['task'], groups=task_schema(config, request['task']),
+                        task_switches=self.task_switches(config))
         if command == 'create':
             numbers = [int(match.group(1)) for item in self.list_configs()
                        if (match := re.fullmatch(r'oas(\d+)', item))]

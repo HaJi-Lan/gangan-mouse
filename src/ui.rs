@@ -318,14 +318,21 @@ impl eframe::App for Desktop {
             section_heading(ui, "01", "任务");
             ui.add_space(4.0);
             let menu = self.menu.as_object().cloned().unwrap_or_default();
-            egui::ComboBox::from_id_salt("category").width(ui.available_width() - 10.0)
-                .selected_text(if self.category.is_empty() { "全部分类".into() } else { self.label(&self.category) })
-                .show_ui(ui, |ui| {
-                ui.selectable_value(&mut self.category, String::new(), "全部分类");
-                for (category, tasks) in &menu {
-                    if tasks.as_array().is_some_and(|tasks| !tasks.is_empty()) {
-                        let label = self.label(category); ui.selectable_value(&mut self.category, category.clone(), label);
-                    }
+            ui.label(RichText::new("当前已启用任务").strong());
+            let mut enabled = Vec::new();
+            for tasks in menu.values() {
+                for task in tasks.as_array().into_iter().flatten().filter_map(Value::as_str) {
+                    let key = Key::new(&self.selected, task, "scheduler", "enable");
+                    let draft = self.editor.value(&key).and_then(Value::as_bool);
+                    let saved = self.task_switches.get(&self.selected).and_then(|values| values.get(task)).copied().unwrap_or(false);
+                    if draft.unwrap_or(saved) { enabled.push((task.to_string(), draft.is_some())); }
+                }
+            }
+            egui::ScrollArea::vertical().id_salt("enabled_tasks").max_height(150.0).show(ui, |ui| {
+                if enabled.is_empty() { ui.label(RichText::new("暂无已启用任务").size(12.0).color(MUTED)); }
+                for (task, unsaved) in enabled {
+                    let title = format!("● {}{}", self.label(&task), if unsaved { " · 未保存" } else { "" });
+                    if ui.add_enabled(!self.busy(), egui::SelectableLabel::new(self.task == task, title)).clicked() { self.navigate(task); }
                 }
             });
             ui.separator();
@@ -334,12 +341,11 @@ impl eframe::App for Desktop {
                 let mut matches = 0;
                 ui.add_enabled_ui(!self.busy(), |ui| {
                     for (category, tasks) in menu {
-                        if !self.category.is_empty() && category != self.category { continue; }
                         let tasks: Vec<_> = tasks.as_array().into_iter().flatten().filter_map(Value::as_str)
                             .map(str::to_string).collect();
                         if tasks.is_empty() { continue; }
                         matches += tasks.len();
-                        if self.category.is_empty() { ui.label(RichText::new(self.label(&category)).size(12.0).color(MUTED)); }
+                        ui.label(RichText::new(self.label(&category)).size(12.0).color(MUTED));
                         for task in tasks {
                             if ui.add_sized([ui.available_width(), 25.0], egui::SelectableLabel::new(self.task == task, self.label(&task))).clicked() { self.navigate(task); }
                         }
