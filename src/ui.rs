@@ -67,7 +67,6 @@ impl Desktop {
         if task == self.task { return; }
         self.task = task;
         self.groups = Value::Null;
-        self.parameter_search.clear();
         self.schema();
     }
     fn config_selector(&mut self, ui: &mut egui::Ui) {
@@ -145,24 +144,18 @@ impl Desktop {
     fn fields(&mut self, ui: &mut egui::Ui) {
         let mut groups: Vec<_> = self.groups.as_object().cloned().unwrap_or_default().into_iter().collect();
         groups.sort_by_key(|(name, _)| name == "scheduler");
-        let query = self.parameter_search.to_lowercase();
-        let mut shown = 0;
         for (group, fields) in groups {
             let fields: Vec<_> = fields.as_array().into_iter().flatten().filter(|field| {
-                if group == "scheduler" && field["name"] == "enable" { return false; }
-                query.is_empty() || self.label(field["name"].as_str().unwrap_or("")).to_lowercase().contains(&query)
-                    || self.label(&group).to_lowercase().contains(&query)
-                    || help::description(&self.translations, field["name"].as_str().unwrap_or(""), field["description"].as_str()).to_lowercase().contains(&query)
+                !(group == "scheduler" && field["name"] == "enable")
             }).cloned().collect();
             if fields.is_empty() { continue; }
-            shown += fields.len();
             egui::Frame::none().fill(PANEL).rounding(4.0)
                 .stroke(egui::Stroke::new(1.0_f32, BORDER))
                 .inner_margin(7.0).show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 egui::CollapsingHeader::new(RichText::new(self.label(&group)).strong().size(16.0))
                     .id_salt((&self.selected, &self.task, &group)).default_open(group != "scheduler")
-                    .open(if query.is_empty() { None } else { Some(true) }).show(ui, |ui| {
+                    .show(ui, |ui| {
                     for field in &fields {
                         let key = field["name"].as_str().unwrap_or("");
                         let title = self.label(key);
@@ -214,7 +207,6 @@ impl Desktop {
             });
             ui.add_space(5.0);
         }
-        if shown == 0 && !query.is_empty() { ui.label("没有找到匹配的设置，试试其他关键词。"); }
     }
     fn logs_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal_wrapped(|ui| {
@@ -393,11 +385,6 @@ impl eframe::App for Desktop {
             }
             ui.add_space(5.0);
             ui.horizontal_wrapped(|ui| {
-                ui.scope(|ui| {
-                    ui.visuals_mut().extreme_bg_color = SURFACE;
-                    ui.add(egui::TextEdit::singleline(&mut self.parameter_search).hint_text("查找当前任务的设置")
-                        .desired_width(220.0).margin(egui::vec2(6.0, 4.0)));
-                });
                 ui.checkbox(&mut self.show_help, "显示说明");
             });
             ui.add_space(5.0);
