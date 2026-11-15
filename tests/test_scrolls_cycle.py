@@ -80,6 +80,56 @@ class ScrollsCycleTests(unittest.TestCase):
             self.cycle.exploration_check(Mock(), self.settings, Mock())
         self.assertIsNone(self.cycle.requested)
 
+    def test_full_ticket_icon_misread_recovers_before_exploring(self):
+        import numpy as np
+        from module.atom.ocr import RuleOcr
+        task = self.exploration_task(30, entrance=True)
+        task.device.image = np.zeros((720, 1280, 3), dtype=np.uint8)
+        rule = RuleOcr(name='REALM_RAID_NUMBER1', mode='DigitCounter', method='Default',
+                       roi=(920, 12, 78, 30), area=(920, 12, 78, 30), keyword='')
+        rule.model = Mock()
+        # First pass reproduces 130/30 from the log; cropped fresh frames
+        # must yield a valid 30/30 instead of clamping 130 to 30.
+        rule.model.ocr_single_line.side_effect = [('130/30', .99),
+            ('130/30', .99), ('30/30', .99), ('130/30', .99), ('30/30', .99)]
+        task.O_REALM_RAID_NUMBER1 = rule
+        with game_dependencies(), self.assertRaises(TaskEnd):
+            self.cycle.exploration_check(task, self.settings, Mock())
+        self.assertEqual(self.cycle.requested, 'RealmRaid')
+        self.assertGreaterEqual(task.screenshot.call_count, 2)
+
+    def test_unreadable_entrance_does_not_enter_chapter(self):
+        import numpy as np
+        task = self.exploration_task(30, entrance=True)
+        task.O_REALM_RAID_NUMBER1.ocr.return_value = (130, -100, 30)
+        rule = task.O_REALM_RAID_NUMBER1
+        rule.roi = (920, 12, 78, 30)
+        rule.score = .6
+        rule.model.ocr_single_line.return_value = ('130/30', .99)
+        task.device.image = np.zeros((720, 1280, 3), dtype=np.uint8)
+        with game_dependencies(), self.assertRaises(TaskEnd):
+            self.cycle.exploration_check(task, self.settings, Mock())
+        self.assertIsNone(self.cycle.requested)
+
+    def test_recovery_does_not_clamp_invalid_or_low_confidence_counts(self):
+        from scrolls_cycle import retry_exploration_counter
+        task = Mock()
+        rule = Mock(roi=(920, 12, 78, 30), score=.6)
+        for text, score in [('130/30', .99), ('30/3', .99), ('30/30', .3), ('', .99)]:
+            with self.subTest(text=text, score=score):
+                rule.model.ocr_single_line.return_value = (text, score)
+                self.assertIsNone(retry_exploration_counter(task, rule, self.sleep, self.log))
+
+    def test_crop_recovery_preserves_counts_below_threshold(self):
+        from scrolls_cycle import retry_exploration_counter
+        task = Mock()
+        rule = Mock(roi=(920, 12, 78, 30), score=.6)
+        rule.model.ocr_single_line.side_effect = [('124/30', .99), ('24/30', .99)] * 2
+        self.assertEqual(retry_exploration_counter(task, rule, self.sleep, self.log), 24)
+
+    def test_wrong_counter_total_is_not_a_raid_ticket(self):
+        self.assertIsNone(ticket_count((3, 0, 3)))
+
     def test_raid_confirms_empty_and_does_not_return_on_unreadable_frame(self):
         with game_dependencies():
             for frames, challenge, depleted in [([(1, 29, 30)], True, False),

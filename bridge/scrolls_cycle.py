@@ -1,5 +1,6 @@
 """Exploration / personal raid workflow; upstream files remain updateable."""
 import random
+import re
 import time
 from pathlib import Path
 
@@ -88,9 +89,39 @@ def ticket_count(result):
     # OCR uses Python integer counters. Reject bools and fractional values.
     if any(isinstance(value, bool) or not isinstance(value, int) for value in result):
         return None
-    if not 0 < total <= 30 or current < 0 or rest < 0 or current + rest != total:
+    if total != 30 or current < 0 or rest < 0 or current + rest != total:
         return None
     return current
+
+
+def retry_exploration_counter(task, rule, sleep, log):
+    """Recover an icon read as a leading digit, without altering OCR numbers."""
+    last, confirmed = None, 0
+    for _ in range(3):
+        sleep(0.3)
+        task.screenshot()
+        roi = rule.roi
+        # Retry the same ROI, then omit only the left icon/padding. Accept
+        # complete fractions with the real ticket capacity, on two frames.
+        value = None
+        for inset in (0, 8, 16):
+            x, y, width, height = roi
+            image = rule.pre_process(rule.crop(task.device.image,
+                                               (x + inset, y, width - inset, height)))
+            text, score = rule.model.ocr_single_line(image)
+            match = re.fullmatch(r'\s*(0|[1-9][0-9]?)\s*/\s*30\s*', text)
+            if score >= rule.score and match and int(match[1]) <= 30:
+                value = int(match[1])
+                break
+        if value is None:
+            last, confirmed = None, 0
+            continue
+        confirmed = confirmed + 1 if value == last else 1
+        last = value
+        if confirmed >= 2:
+            log(f'绘卷突破券重新确认：{value}/30')
+            return value
+    return None
 
 
 class ScrollsCycle:
@@ -169,11 +200,21 @@ class ScrollsCycle:
         if not self.enabled():
             raise TaskEnd
         settings = self.read_config().exploration.scrolls
-        rule = (task.O_REALM_RAID_NUMBER1
-                if task.appear(task.I_E_EXPLORATION_CLICK) and task.appear(task.I_EXP_CREATE_TEAM)
-                else task.O_REALM_RAID_NUMBER)
+        entrance = task.appear(task.I_E_EXPLORATION_CLICK) and task.appear(task.I_EXP_CREATE_TEAM)
+        rule = task.O_REALM_RAID_NUMBER1 if entrance else task.O_REALM_RAID_NUMBER
         count = ticket_count(rule.ocr(task.device.image))
-        if count is None or count == 0 or count < settings.scrolls_threshold:
+        if count is None:
+            self.log('绘卷突破券读数无效，重新截图识别')
+            count = retry_exploration_counter(task, rule, self.sleep, self.log)
+        if count is None:
+            if entrance:
+                self.log('章节入口仍无法确认突破券，5 秒后重试，暂不进入探索')
+                self.pause(5)
+                raise TaskEnd
+            # The world map can hide this counter. Opening the chapter
+            # exposes its own counter; that entrance is guarded above.
+            return
+        if count == 0 or count < settings.scrolls_threshold:
             return
         for target in (task.I_RED_CLOSE, task.I_UI_CANCEL, task.I_UI_CANCEL_SAMLL):
             if task.appear(target):
