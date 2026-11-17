@@ -1,0 +1,8 @@
+{
+  "Overview": [],
+  "Script": ["Script", "Restart", "GlobalGame"],
+  "Soul Zones": ["Orochi", "Sougenbi", "FallenSun", "EternitySea", "SixRealms", "OtherWorldTwilight"],
+  "Liver Emperor Exclusive": ["BondlingFairyland", "EvoZone", "GoryouRealm", "Exploration", "Hyakkiyakou", "MemoryScrolls", "RealmRaid"],
+  "Guild": ["KekkaiUtilize", "KekkaiActivation", "RyouToppa", "Dokan", "CollectiveMissions", "Hunt", "AbyssShadows", "GuildBanquet", "DemonRetreat", "GuildActivityMonitor"],
+  "Activity Task": ["ActivityShikigami", "MetaDemon", "FrogBoss", "Quiz", "KittyShop", "DyeTrials", "BudokaiTournament"]
+}

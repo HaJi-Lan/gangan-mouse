@@ -45,6 +45,15 @@ try {
         $env:RUSTFLAGS = '-C linker=rust-lld -C linker-flavor=ld.lld -C link-self-contained=yes'
     }
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw 'Rust toolchain is missing. Restore the bundled .build-tools directory.' }
+    if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
+        foreach ($taskNativeCompiler in @((Join-Path $projectRoot '.build-tools/w64devkit/bin'), 'C:/msys64/mingw64/bin', 'C:/msys64/ucrt64/bin')) {
+            if (Test-Path -LiteralPath (Join-Path $taskNativeCompiler 'gcc.exe')) {
+                $env:PATH = "$taskNativeCompiler;$env:PATH"
+                break
+            }
+        }
+    }
+    if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) { throw 'Native OCR compilation requires MinGW GCC. Install it in .build-tools/w64devkit or add gcc to PATH. End users can use precompiled updates.' }
     $buildArgs = @('build', '--locked')
     if ($Release) { $buildArgs += '--release' }
     $taskCargoOut = Join-Path $taskLogDir 'build-cargo.stdout.log'

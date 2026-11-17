@@ -6,6 +6,8 @@ mod editor;
 mod execution;
 mod ui;
 mod runtime;
+mod task_catalog;
+mod native;
 mod update;
 
 use eframe::egui;
@@ -214,6 +216,14 @@ fn check(layout: Layout) -> Result<(), String> {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().any(|arg| arg == "--native-worker") {
+        return native::serve().map_err(|e| std::io::Error::other(e).into());
+    }
+    if std::env::args().any(|arg| arg == "--task-catalog") {
+        task_catalog::TaskCatalog::bundled();
+        println!("{}", task_catalog::SOURCE);
+        return Ok(());
+    }
     let layout = Layout::discover().map_err(std::io::Error::other)?;
     #[cfg(windows)]
     let _instance = instance::Instance::acquire(&layout.root).map_err(std::io::Error::other)?;
@@ -239,7 +249,7 @@ fn main() {
     if let Err(error) = run() {
         eprintln!("{error}");
         #[cfg(windows)]
-        if !std::env::args().any(|arg| arg == "--check" || arg == "--update") {
+        if !std::env::args().any(|arg| arg == "--check" || arg == "--update" || arg == "--task-catalog" || arg == "--native-worker") {
             let message: Vec<u16> = format!("肝肝鼠启动失败：{error}\0").encode_utf16().collect();
             let title: Vec<u16> = "肝肝鼠\0".encode_utf16().collect();
             unsafe {

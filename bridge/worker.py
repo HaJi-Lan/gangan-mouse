@@ -24,6 +24,8 @@ def run_task(root, name, emit):
     from module.logger import set_file_logger, set_func_logger
     set_file_logger(name=name)
     set_func_logger(lambda text: emit(dict(event='log', config=name, text=str(text))))
+    from native_backend import install_native_backend
+    install_native_backend()
     Script = install_runtime_policy()
     script = Script(config_name=name)
     class StateQueue:
@@ -141,7 +143,8 @@ class Runtime:
             if name in self.processes:
                 raise ValueError('该配置已在运行')
             from module.server.setting import State
-            if State.deploy_config.StartOcrServer:
+            from native_ocr import uses_native_ocr
+            if State.deploy_config.StartOcrServer and not uses_native_ocr(State.deploy_config):
                 from module.ocr.rpc import ensure_ocr_server_started
                 if not ensure_ocr_server_started():
                     raise RuntimeError('OCR 服务未就绪，请检查日志')
@@ -177,7 +180,8 @@ class Runtime:
 
     def check_task(self, task):
         from module.config.utils import convert_to_underscore
-        if convert_to_underscore(task) in self.removed_tasks:
+        allowed = {convert_to_underscore(item) for tasks in self.menu.values() for item in tasks}
+        if convert_to_underscore(task) not in allowed:
             raise ValueError('此任务已从当前版本移除')
 
     def stop(self, name):

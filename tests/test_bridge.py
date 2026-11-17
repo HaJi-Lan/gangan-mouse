@@ -46,14 +46,15 @@ class Script:
         config = Config(self.config_name)
         from module.config.config_menu import ConfigMenu
         from module.config.utils import convert_to_underscore
-        removed = ['DailyTrifles', 'WeeklyTrifles', 'HeroTest', 'FindJade', 'FloatParade',
-                   *(task for task in ConfigMenu().gui_menu_list['Guild'] if task != 'RealmRaid')]
-        for key in [*(convert_to_underscore(task) for task in removed), 'orochi']:
+        removed = ['DailyTrifles', 'WeeklyTrifles', 'HeroTest', 'FindJade', 'FloatParade']
+        guild = [task for task in ConfigMenu().gui_menu_list['Guild'] if task != 'RealmRaid']
+        for key in [*(convert_to_underscore(task) for task in removed + guild), 'orochi']:
             object.__setattr__(getattr(config.model, key).scheduler, 'enable', True)
         config.update_scheduler()
         scheduled = {task.command for task in config.pending_task + config.waiting_task}
         assert not set(removed) & scheduled
         assert 'Orochi' in scheduled
+        assert set(guild) <= scheduled
         for task in removed:
             assert config.task_call(task, force_call=True) is False
             assert self.run(task) is True
@@ -134,7 +135,10 @@ class Script:
         self.assertIn('MetaDemon', result['data']['menu']['Activity Task'])
         self.assertNotIn('Daily Task', result['data']['menu'])
         self.assertNotIn('Weekly Task', result['data']['menu'])
-        self.assertNotIn('Guild', result['data']['menu'])
+        self.assertEqual(set(result['data']['menu']['Guild']),
+                         {'KekkaiUtilize', 'KekkaiActivation', 'RyouToppa', 'Dokan',
+                          'CollectiveMissions', 'Hunt', 'AbyssShadows', 'GuildBanquet',
+                          'DemonRetreat', 'GuildActivityMonitor'})
         tasks = [task for category in result['data']['menu'].values() for task in category]
         for task in ('HeroTest', 'FindJade', 'FloatParade'):
             self.assertNotIn(task, tasks)
@@ -223,14 +227,31 @@ class Script:
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and isinstance(node.value, ast.List):
                 for target in node.targets:
-                    if isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant) and target.slice.value in ('Daily Task', 'Weekly Task', 'Guild'):
+                    if isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant) and target.slice.value in ('Daily Task', 'Weekly Task'):
                         removed.extend(ast.literal_eval(node.value))
         removed = [task for task in removed if task != 'RealmRaid']
-        self.assertIn('Hunt', removed)
+        self.assertNotIn('Hunt', removed)
         for task in removed:
             with self.subTest(task=task):
                 self.assertFalse(self.request('schema', config='oas1', task=task)['ok'])
                 self.assertFalse(self.request('set', config='oas1', task=task, group='scheduler', argument='enable', value=True)['ok'])
+
+    def test_guild_task_switches_can_be_saved_and_reloaded(self):
+        name = self.request('create')['data']['selected']
+        guild = self.request('hello')['data']['menu']['Guild']
+        for task in guild:
+            with self.subTest(task=task):
+                result = self.request('set', config=name, task=task, group='scheduler',
+                                      argument='enable', value=True)
+                self.assertTrue(result['ok'], result)
+                switches = self.request('schema', config=name, task=task)['data']['task_switches']
+                self.assertTrue(switches[task])
+
+    def test_unported_upstream_tasks_cannot_be_loaded_or_enabled(self):
+        for task in ('FutureUpstreamTask', 'future_upstream_task'):
+            self.assertFalse(self.request('schema', config='oas1', task=task)['ok'])
+            self.assertFalse(self.request('set', config='oas1', task=task,
+                                         group='scheduler', argument='enable', value=True)['ok'])
 
     def test_create_and_save_are_isolated_and_persisted(self):
         name = self.request('create')['data']['selected']

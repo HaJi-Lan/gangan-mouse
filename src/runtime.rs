@@ -56,6 +56,8 @@ impl Bridge {
         let mut command = Command::new(&layout.python);
         hide(&mut command).arg("-u").arg(&layout.bridge).arg("--root").arg(&layout.upstream)
             .current_dir(&layout.upstream).env("PYTHONIOENCODING", "utf-8").env("PYTHONUTF8", "1")
+            .env(crate::task_catalog::ENVIRONMENT, crate::task_catalog::SOURCE)
+            .env("GANGAN_NATIVE_EXE", std::env::current_exe().map_err(|e| e.to_string())?)
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = command.spawn().map_err(|e| e.to_string())?;
         #[cfg(windows)]
@@ -115,6 +117,7 @@ impl Worker {
         let (tx, rx) = mpsc::channel();
         let (events_tx, events) = mpsc::channel();
         let thread = thread::spawn(move || {
+            let catalog = crate::task_catalog::TaskCatalog::bundled();
             let start = |tx: &Sender<Value>| match Bridge::spawn(&layout, tx.clone()) {
                 Ok(bridge) => Some(bridge),
                 Err(error) => { let _ = tx.send(json!({"event":"fatal","error":error})); None }
@@ -138,6 +141,10 @@ impl Worker {
                     Work::Quit => break,
                     Work::Restart => { bridge.take(); bridge = start(&events_tx); }
                     Work::Request(value) => {
+                        if let Some(response) = catalog.rejection(&value) {
+                            let _ = events_tx.send(response);
+                            continue;
+                        }
                         let result = bridge.as_mut().ok_or("运行环境未连接".to_string()).and_then(|b| b.send(&value));
                         if let Err(error) = result { let _ = events_tx.send(json!({"event":"error","error":error})); }
                     }

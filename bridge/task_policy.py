@@ -1,24 +1,24 @@
-"""Task selection for this desktop edition, separate from upstream source."""
-REMOVED_CATEGORIES = frozenset({'Daily Task', 'Weekly Task', 'Guild'})
-REMOVED_TASKS = frozenset({'HeroTest', 'FindJade', 'FloatParade'})
-MOVED_TASKS = {'RealmRaid': 'Liver Emperor Exclusive'}
+"""Compatibility executor for the native desktop's retained task catalog."""
 
 
 def task_selection():
+    import json
+    import os
+    from pathlib import Path
     from module.config.config_menu import ConfigMenu
     from module.config.utils import convert_to_underscore
     menu = ConfigMenu().gui_menu_list
-    removed = {convert_to_underscore(task) for task in REMOVED_TASKS}
-    removed.update(convert_to_underscore(task)
-                   for category, tasks in menu.items() if category in REMOVED_CATEGORIES
-                   for task in tasks if task not in MOVED_TASKS)
-    selected = {category: [task for task in tasks if convert_to_underscore(task) not in removed
-                          and task not in MOVED_TASKS]
-                for category, tasks in menu.items() if category not in REMOVED_CATEGORIES}
     available = {task for tasks in menu.values() for task in tasks}
-    for task, category in MOVED_TASKS.items():
-        if task in available:
-            selected.setdefault(category, []).append(task)
+    # The Rust host supplies its compiled catalog to the executor and child tasks.
+    # Direct Python/source use reads the same data, without a second policy table.
+    source = os.environ.get('GANGAN_TASK_CATALOG')
+    if source is None:
+        source = (Path(__file__).resolve().parents[1] / 'assets/task-catalog.json').read_text('utf-8')
+    catalog = json.loads(source)
+    selected = {category: [task for task in tasks if task in available]
+                for category, tasks in catalog.items()}
+    allowed = {task for tasks in selected.values() for task in tasks}
+    removed = {convert_to_underscore(task) for task in available - allowed}
     return selected, removed
 
 
@@ -27,7 +27,8 @@ def install_runtime_policy():
     import module.config.config as config_module
     from module.config.utils import convert_to_underscore
     from module.logger import logger
-    _, removed = task_selection()
+    selected, _ = task_selection()
+    allowed = {convert_to_underscore(task) for tasks in selected.values() for task in tasks}
     upstream_config = config_module.Config
     cycle_context = {'cycle': None, 'recovery': False}
 
@@ -35,9 +36,9 @@ def install_runtime_policy():
         def update_scheduler(self):
             super().update_scheduler()
             self.pending_task = [task for task in self.pending_task
-                                 if convert_to_underscore(task.command) not in removed]
+                                 if convert_to_underscore(task.command) in allowed]
             self.waiting_task = [task for task in self.waiting_task
-                                 if convert_to_underscore(task.command) not in removed]
+                                 if convert_to_underscore(task.command) in allowed]
             scrolls = self.model.exploration.scrolls
             hidden = set()
             if not scrolls.scrolls_enable:
@@ -50,7 +51,7 @@ def install_runtime_policy():
                 self.pending_task.sort(key=lambda task: task.command != 'Restart')
 
         def task_call(self, task=None, force_call=True):
-            if task and convert_to_underscore(task) in removed:
+            if task and convert_to_underscore(task) not in allowed:
                 return False
             if task and convert_to_underscore(task) == 'restart':
                 cycle = cycle_context['cycle']
@@ -88,7 +89,7 @@ def install_runtime_policy():
                 queue.put({'execution': execution})
 
         def run(self, command):
-            if convert_to_underscore(command) in removed:
+            if convert_to_underscore(command) not in allowed:
                 logger.info(f'已移除任务，跳过执行：{command}')
                 return True
             self.report_execution(command, command)
