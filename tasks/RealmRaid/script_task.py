@@ -13,10 +13,11 @@ from tasks.RealmRaid.assets import RealmRaidAssets
 from tasks.RealmRaid.config import RealmRaid, RaidMode, AttackNumber, WhenAttackFail
 from tasks.Component.SwitchSoul.switch_soul import SwitchSoul
 from tasks.Component.GeneralBattle.battle_wait import battle_wait_strategy
+from tasks.Component.CostumeBattle.assets import CostumeBattleAssets
 
 
 from module.logger import logger
-from module.exception import TaskEnd
+from module.exception import TaskEnd, RequestHumanTakeover
 from module.atom.image_grid import ImageGrid
 from module.atom.image import RuleImage
 from module.atom.click import RuleClick
@@ -25,8 +26,141 @@ from module.atom.click import RuleClick
 class ScriptTask(GeneralBattle, GameUi, SwitchSoul, RealmRaidAssets):
     medal_grid: ImageGrid = None
 
+    @cached_property
+    def raid_battle_markers(self):
+        # This observed battle skin moves the information button to x=304.
+        # Clone rules so the wider search and click coordinates stay raid-local.
+        info = CostumeBattleAssets.I_BATTLE_INFO_11
+        back = CostumeBattleAssets.I_EXIT_11
+        return (
+            RuleImage(info.roi_front, (280, 0, 80, 70), info.method, 0.9, info.file),
+            RuleImage(back.roi_front, (0, 0, 75, 70), back.method, 0.9, back.file),
+        )
+
+    def is_in_real_battle(self, is_screenshot=True):
+        if is_screenshot:
+            self.screenshot()
+        if super().is_in_real_battle(False):
+            return True
+        if self.is_in_prepare(False) or any(self.appear(rule) for rule in
+                (self.I_WIN, self.I_FALSE, self.I_REWARD, self.I_REWARD_GOLD, self.I_DE_WIN)):
+            return False
+        info, back = self.raid_battle_markers
+        return self.appear(info) and self.appear(back)
+
+    def battle_before(self, buff, config, timeout: float = 30) -> bool:
+        """Raid loading may outlast five seconds; unknown entry is not a loss."""
+        started = time.monotonic()
+        configured = False
+        while time.monotonic() - started < timeout:
+            self.screenshot()
+            if (self.is_in_real_battle(False) or any(self.appear(rule) for rule in
+                    (self.I_WIN, self.I_FALSE, self.I_REWARD, self.I_REWARD_GOLD, self.I_DE_WIN))):
+                return True
+            if self.appear_then_click(self.I_DISABLE_7DAYS_DIFF_SOUL, interval=0.6):
+                continue
+            if self.appear_then_click(self.I_CONFIRM_CLOSE_DIFF_SOUL, interval=0.6):
+                continue
+            if self.is_in_prepare(False):
+                locked = getattr(config, 'lock_team_enable', False)
+                if not locked and self.current_count == 1 and not configured:
+                    self.switch_preset_team(config.preset_enable, config.preset_group, config.preset_team)
+                    self.check_and_open_buff(buff)
+                    configured = True
+                # Give locked formations their usual automatic preparation first.
+                # Only a freshly matched ready button authorizes the fallback click.
+                if not locked or time.monotonic() - started >= 5:
+                    if self.appear_then_click(self.I_PREPARE_HIGHLIGHT, interval=0.8):
+                        continue
+            time.sleep(0.5)
+        logger.warning(f'RealmRaid entry unconfirmed after {timeout:.0f}s; stop without marking defeat or refreshing')
+        try:
+            self.device.save_screenshot(genre='realm_raid_prepare_timeout', interval=0)
+        except Exception as error:
+            logger.warning(f'RealmRaid timeout screenshot failed: {type(error).__name__}')
+        raise RequestHumanTakeover('个人突破入场超时，未确认战斗结果，已停止；请检查游戏画面及 log/screenshots 截图')
+
     def run(self):
         self.run_2()
+
+    def finish_raid_result(self, won):
+        """Drain an observed result before navigation or another challenge."""
+        started = time.monotonic()
+        clicks = {'loss': 0, 'win': 0, 'reward': 0}
+        while time.monotonic() - started < 20:
+            if self.appear(self.I_RR_PERSON):
+                # This is actual progress, not a reset while stuck on two buttons.
+                self.device.click_record_clear()
+                return won
+            if self.appear(self.I_FALSE):
+                if clicks['loss'] < 3 and self.appear_then_click(self.I_FALSE, interval=2):
+                    clicks['loss'] += 1
+            elif self.appear(self.I_WIN) or self.appear(self.I_DE_WIN):
+                won = True
+                if clicks['win'] < 3 and self.click(self.C_WIN_1, interval=2):
+                    clicks['win'] += 1
+            elif self.appear(self.I_REWARD) or self.appear(self.I_REWARD_GOLD):
+                won = True
+                if clicks['reward'] < 3 and self.click(self.C_REWARD_2, interval=2):
+                    clicks['reward'] += 1
+            time.sleep(0.5)
+            self.screenshot()
+        self.device.save_screenshot(genre='realm_raid_result_timeout', interval=0)
+        raise RequestHumanTakeover('个人突破结算页未能关闭，已停止；请检查 log/screenshots 截图')
+
+    def resume_raid_result(self):
+        self.screenshot()
+        if any(self.appear(rule) for rule in
+                (self.I_FALSE, self.I_WIN, self.I_DE_WIN, self.I_REWARD, self.I_REWARD_GOLD)):
+            logger.info('RealmRaid pending result detected; finish before navigation')
+            self.finish_raid_result(won=not self.appear(self.I_FALSE))
+
+    def run_general_battle_back(self, config=None, exit_four=False) -> bool:
+        if not exit_four:
+            return super().run_general_battle_back(config, exit_four=exit_four)
+        started = time.monotonic()
+        exit_requested = False
+        confirm_count = 0
+        last_confirm = None
+        while time.monotonic() - started < 45:
+            self.screenshot()
+            if any(self.appear(rule) for rule in
+                    (self.I_FALSE, self.I_WIN, self.I_DE_WIN, self.I_REWARD, self.I_REWARD_GOLD)):
+                won = self.finish_raid_result(won=not self.appear(self.I_FALSE))
+                if won:
+                    logger.info('RealmRaid retreat ended in a win; rewards collected, select another target')
+                else:
+                    logger.info('RealmRaid retreat confirmed; returned to raid list')
+                return not won
+            if exit_requested:
+                # Once exit is requested, never click it again during this attempt.
+                # A still-visible confirm gets at most one retry after three seconds.
+                if (confirm_count < 2 and (last_confirm is None or time.monotonic() - last_confirm >= 3)
+                        and self.appear_then_click(self.I_UI_CONFIRM, interval=1)):
+                    confirm_count += 1
+                    last_confirm = time.monotonic()
+            elif not self.appear(self.I_RR_PERSON) and not self.appear(self.I_UI_CONFIRM):
+                if self.appear_then_click(self.I_EXIT, interval=1):
+                    exit_requested = True
+                elif self.is_in_real_battle(False) and self.appear_then_click(self.raid_battle_markers[1], interval=1):
+                    exit_requested = True
+            time.sleep(0.5)
+        logger.warning('RealmRaid retreat unconfirmed after 45s; stop without another challenge')
+        try:
+            self.device.save_screenshot(genre='realm_raid_retreat_timeout', interval=0)
+        except Exception as error:
+            logger.warning(f'RealmRaid retreat screenshot failed: {type(error).__name__}')
+        raise RequestHumanTakeover('个人突破退四超时，未确认退战结果，已停止；请检查 log/screenshots 截图')
+
+    def retreat_four(self, index, config) -> bool:
+        for _ in range(4):
+            if not self.check_ticket(config.raid_config.number_base):
+                return False
+            self.fire(index)
+            if not self.run_general_battle_back(config.general_battle_config, exit_four=True):
+                # The target has been beaten; do not keep attacking its old slot.
+                return False
+        return True
 
     def is_ticket(self) -> bool:
         """
@@ -120,6 +254,7 @@ class ScriptTask(GeneralBattle, GameUi, SwitchSoul, RealmRaidAssets):
     # ------------------------------------------------------------------------------------------------------------------
     def run_2(self):
         con = self.config.realm_raid
+        self.resume_raid_result()
         if con.switch_soul_config.enable:
             self.goto_page(page_shikigami_records)
             self.run_switch_soul(con.switch_soul_config.switch_group_team)
@@ -191,14 +326,8 @@ class ScriptTask(GeneralBattle, GameUi, SwitchSoul, RealmRaidAssets):
                 logger.info('Now is the first one')
                 if con.raid_config.exit_four:
                     logger.info('Exit four enable')
-                    self.fire(index)
-                    self.run_general_battle_back(con.general_battle_config, exit_four=True)
-                    self.fire(index)
-                    self.run_general_battle_back(con.general_battle_config, exit_four=True)
-                    self.fire(index)
-                    self.run_general_battle_back(con.general_battle_config, exit_four=True)
-                    self.fire(index)
-                    self.run_general_battle_back(con.general_battle_config, exit_four=True)
+                    if not self.retreat_four(index, con):
+                        continue
             elif self.check_medal_is_frog(frog, medal, index):
                 # 如果挑战的这只是呱太的话，就要把锁定改为不锁定
                 con.general_battle_config.lock_team_enable = False

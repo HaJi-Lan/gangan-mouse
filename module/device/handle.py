@@ -20,7 +20,7 @@ from win32con import (SRCCOPY, DESKTOPHORZRES, DESKTOPVERTRES, WM_LBUTTONUP,
 from module.config.config import Config
 from module.config.utils import desktop_mode_enabled
 from module.device.method.desktop_impl import DesktopWindow
-from module.exception import EmulatorNotRunningError
+from module.exception import EmulatorNotRunningError, RequestHumanTakeover
 from module.logger import logger
 
 
@@ -371,6 +371,8 @@ class Handle(DesktopWindow):
         """
         if getattr(self, 'is_desktop_window', False):
             return self.root_handle_num
+        if getattr(self, 'root_node', None) is None:
+            raise RequestHumanTakeover('窗口截图未绑定模拟器句柄：请填写模拟器句柄，或将截图方式改为 nemu_ipc / ADB；桌面客户端请开启桌面模式')
         if self.emulator_family == EmulatorFamily.FAMILY_MUMU:
             # 使用正则匹配12 来判定是不是mumu12这并不是一个好的方法
             name = self.root_node.children[0].name
